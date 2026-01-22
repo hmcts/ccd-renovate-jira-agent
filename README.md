@@ -9,10 +9,10 @@ Env Variables Required:
 =======================
 export MODE=run, or dry-run
 export REPO_LIST_FILE=./repo-list.txt
-export GITHUB_TOKEN=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
+export GITHUB_TOKEN=<YOUR-GITHUB-FINE-GRAINED-TOKEN>
 export JIRA_BASE_URL=https://tools.hmcts.net/jira
-export JIRA_USER_EMAIL=dinesh.patel@hmcts.net
-export JIRA_PAT=NTY2MzQxNzg3MzU0OhefyypVmuJZgHBZsDVHvdTGDIEO
+export JIRA_USER_EMAIL=<YOUR_JIRA_LOGIN_EMAIL_ADDRESS>
+export JIRA_PAT=<YOUR_JIRA_PAT>
 export JIRA_API_VERSION=2
 
 
