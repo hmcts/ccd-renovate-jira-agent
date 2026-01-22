@@ -1,0 +1,25 @@
+# Optional per-repo configuration for the Renovate->Jira agent
+enabled: true
+
+create_jira_for:
+  security: true
+  major: true
+  critical-dep: false
+
+critical_dependencies:
+  - spring-boot
+  - log4j
+  - openssl
+
+labels:
+  require: ["Renovate Dependencies"]
+github:
+  comment: false
+  add_labels: false
+
+jira:
+  project: "CCD"
+  priority:
+    security: "2-High"
+    major: "3-Medium"
+    critical-dep: "2-High"
