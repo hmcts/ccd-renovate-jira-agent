@@ -13,7 +13,7 @@ import yaml
 from typing import Iterable, Dict, Any, List, Optional
 import requests
 from requests.auth import HTTPBasicAuth
-from github import Github
+from github import Github, Auth
 from decision import needs_jira
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -51,9 +51,10 @@ if not JIRA_BASE_URL:
 if not (JIRA_PAT or (JIRA_USER_EMAIL and JIRA_API_TOKEN)):
     sys.exit("Jira configuration missing: set JIRA_PAT or JIRA_USER_EMAIL/JIRA_API_TOKEN")
 
-gh = Github(GITHUB_TOKEN, per_page=PAGE_SIZE)
+gh = Github(auth=Auth.Token(GITHUB_TOKEN), per_page=PAGE_SIZE)
 
 def load_repo_config(repo) -> Dict[str, Any]:
+    # Defaults apply whenever a repo config omits a key; repo settings override these values.
     defaults = {
         "enabled": True,
         "create_jira_for": {"security": True, "major": True, "critical-dep": False},
@@ -64,8 +65,9 @@ def load_repo_config(repo) -> Dict[str, Any]:
             "priority": {"security": "High", "major": "Medium", "critical-dep": "High"},
             "labels": ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"],
         },
-        "github": {"comment": True, "add_labels": True, "require_labels": ["renovate"]},
+        "github": {"comment": True, "add_labels": True, "require_labels": ["Renovate Dependencies"]},
     }
+    
     def merge_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
         merged = defaults.copy()
         merged.update(cfg)
@@ -179,6 +181,29 @@ def jira_preflight(project: str) -> None:
     proj.raise_for_status()
     _JIRA_PREFLIGHT_OK.add(project)
 
+def _escape_jql(text: str) -> str:
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+def jira_find_existing_issue(summary: str, project: str, pr_url: str) -> Optional[str]:
+    jql = f'project = "{_escape_jql(project)}" AND summary ~ "{_escape_jql(summary)}"'
+    url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/search"
+    headers = {"Accept": "application/json", **jira_auth()}
+    auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
+    params = {"jql": jql, "maxResults": 1, "fields": "key,summary,description"}
+    try:
+        resp = requests.get(url, headers=headers, params=params, auth=auth)
+        resp.raise_for_status()
+        data = resp.json()
+        issues = data.get("issues", [])
+        if issues:
+            description = (issues[0].get("fields", {}) or {}).get("description") or ""
+            if pr_url and pr_url in description:
+                return issues[0].get("key")
+    except Exception as e:
+        if VERBOSE:
+            print(f"[WARN] Jira search failed for summary match: {e}")
+    return None
+
 def pr_has_ticket_in_comments(pr) -> Optional[str]:
     import re
     try:
@@ -222,11 +247,16 @@ def process_pr(repo, pr, cfg):
         if VERBOSE:
             print(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing}")
         return
+    summary = f"Dependency update: {pr.title}"
     project = cfg.get("jira", {}).get("project", DEFAULT_JIRA_PROJECT)
+    existing = jira_find_existing_issue(summary, project, pr.html_url)
+    if existing:
+        if VERBOSE:
+            print(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing} (summary+PR link)")
+        return
     jira_preflight(project)
     priority_map = cfg.get("jira", {}).get("priority", {})
     priority = priority_map.get(category, "Medium")
-    summary = f"Dependency update: {pr.title}"
     description = f"Renovate PR: {pr.html_url}\n\nReason detected: {reason}\n\nPR excerpt:\n{(pr.body or '')[:1000]}"
     labels_to_add = cfg.get("jira", {}).get("labels", ["needs-jira"])
     jira_resp = jira_create_issue(summary, description, labels_to_add, project, priority)
