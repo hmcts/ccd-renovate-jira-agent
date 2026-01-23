@@ -5,12 +5,16 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
+env:
+  SCHEDULE_ENABLED: "false" # Set to "true" to allow scheduled runs
+
 permissions:
   contents: read
   pull-requests: write
 
 jobs:
   run-agent:
+    if: ${{ github.event_name != 'schedule' || env.SCHEDULE_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
