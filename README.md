@@ -19,7 +19,11 @@ export JIRA_BASE_URL=https://tools.hmcts.net/jira
 export JIRA_USER_EMAIL=<YOUR_JIRA_LOGIN_EMAIL_ADDRESS>
 export JIRA_PAT=<YOUR_JIRA_PAT>
 export JIRA_API_VERSION=2
+export FIX_TICKET_LABELS=true # Optional: update labels/epic/fixVersion on existing tickets
+export FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=false # Optional: allow updates even when MODE=dry-run
 ```
+
+When `MODE=dry-run`, updates are skipped unless `FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=true`.
 
 ## Quick validation of JIRA PAT
 
