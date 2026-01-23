@@ -37,6 +37,8 @@ DEFAULT_JIRA_PROJECT = os.getenv("JIRA_PROJECT_KEY", "CCD")
 JIRA_FIX_VERSION = os.getenv("JIRA_FIX_VERSION", "CCD CI/CD Release")
 JIRA_EPIC_LINK_FIELD = os.getenv("JIRA_EPIC_LINK_FIELD", "customfield_10008")
 JIRA_EPIC_KEY = os.getenv("JIRA_EPIC_KEY", "CCD-7071")
+FIX_TICKET_LABELS = os.getenv("FIX_TICKET_LABELS", "").lower() in {"1", "true", "yes", "on"}
+FIX_TICKET_LABELS_EVEN_IN_DRY_MODE = os.getenv("FIX_TICKET_LABELS_EVEN_IN_DRY_MODE", "").lower() in {"1", "true", "yes", "on"}
 
 MODE = os.getenv("MODE", "dry-run").lower()
 VERBOSE = os.getenv("VERBOSE", "").lower() in {"1", "true", "yes", "on"}
@@ -208,15 +210,81 @@ def jira_find_existing_issue(summary: str, project: str, pr_url: str) -> Optiona
             print(f"[WARN] Jira search failed for summary match: {e}")
     return None
 
+def jira_get_issue(issue_key: str) -> Optional[Dict[str, Any]]:
+    url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}"
+    headers = {"Accept": "application/json", **jira_auth()}
+    auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
+    params = {"fields": f"labels,fixVersions,status,{JIRA_EPIC_LINK_FIELD}"}
+    try:
+        resp = requests.get(url, headers=headers, params=params, auth=auth)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        if VERBOSE:
+            print(f"[WARN] Jira get issue failed for {issue_key}: {e}")
+    return None
+
+def jira_is_withdrawn(issue_key: str) -> bool:
+    issue = jira_get_issue(issue_key)
+    if not issue:
+        return False
+    status = (issue.get("fields", {}) or {}).get("status", {}) or {}
+    return (status.get("name") or "").lower() == "withdrawn"
+
+def jira_update_issue(issue_key: str, fields: Dict[str, Any]) -> None:
+    if MODE == "dry-run" and not FIX_TICKET_LABELS_EVEN_IN_DRY_MODE:
+        print(f"[DRY-RUN] Would update Jira {issue_key} fields: {list(fields.keys())}")
+        return
+    url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}"
+    headers = {"Accept": "application/json", **jira_auth()}
+    auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
+    payload = {"fields": fields}
+    resp = requests.put(url, json=payload, headers=headers, auth=auth)
+    if resp.status_code >= 400:
+        try:
+            err = resp.json()
+        except ValueError:
+            err = {"message": (resp.text or "").strip().replace("\n", " ")[:500]}
+        raise RuntimeError(f"Jira update failed for {issue_key} (status {resp.status_code}): {err}") from None
+
+def jira_ensure_ticket_fields(issue_key: str, desired_labels: List[str], fix_version: str) -> None:
+    issue = jira_get_issue(issue_key)
+    if not issue:
+        return
+    if VERBOSE:
+        print(f"[INFO] Found Jira {issue_key}; checking labels/epic/fixVersion")
+    fields = issue.get("fields", {}) or {}
+    updates: Dict[str, Any] = {}
+
+    current_labels = set(fields.get("labels") or [])
+    desired_labels_set = set(desired_labels or [])
+    if desired_labels_set and not desired_labels_set.issubset(current_labels):
+        updates["labels"] = sorted(current_labels | desired_labels_set)
+
+    current_fix_versions = [v.get("name") for v in (fields.get("fixVersions") or []) if v.get("name")]
+    if fix_version and fix_version not in current_fix_versions:
+        updates["fixVersions"] = [{"name": name} for name in (current_fix_versions + [fix_version])]
+
+    current_epic = fields.get(JIRA_EPIC_LINK_FIELD)
+    if JIRA_EPIC_KEY and current_epic != JIRA_EPIC_KEY:
+        updates[JIRA_EPIC_LINK_FIELD] = JIRA_EPIC_KEY
+
+    if updates:
+        if VERBOSE:
+            print(f"[INFO] Updating Jira {issue_key} fields: {sorted(updates.keys())}")
+        jira_update_issue(issue_key, updates)
+    elif VERBOSE:
+        print(f"[INFO] Jira {issue_key} already has desired labels/epic/fixVersion")
+
 def pr_has_ticket_in_comments(pr) -> Optional[str]:
     import re
     try:
         comments = pr.get_issue_comments()
-        pattern = re.compile(r"\b([A-Z][A-Z0-9]+-\d+)\b")
+        pattern = re.compile(r"\b((?:CCD|HMC)-\d+)\b", re.IGNORECASE)
         for c in comments:
             m = pattern.search(c.body or "")
             if m:
-                return m.group(1)
+                return m.group(1).upper()
     except Exception:
         pass
     return None
@@ -247,20 +315,30 @@ def process_pr(repo, pr, cfg):
             print(f"[SKIP] PR #{pr.number} in {repo.full_name} did not match any rule")
         return
     existing = pr_has_ticket_in_comments(pr)
+    if existing and jira_is_withdrawn(existing):
+        if VERBOSE:
+            print(f"[INFO] Jira {existing} is Withdrawn; creating a new ticket")
+        existing = None
     if existing:
+        if FIX_TICKET_LABELS:
+            labels_to_add = cfg.get("jira", {}).get("labels", [])
+            jira_ensure_ticket_fields(existing, labels_to_add, JIRA_FIX_VERSION)
         print(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing}")
         return
     summary = f"Dependency update: {pr.title}"
     project = cfg.get("jira", {}).get("project", DEFAULT_JIRA_PROJECT)
     existing = jira_find_existing_issue(summary, project, pr.html_url)
     if existing:
+        if FIX_TICKET_LABELS:
+            labels_to_add = cfg.get("jira", {}).get("labels", [])
+            jira_ensure_ticket_fields(existing, labels_to_add, JIRA_FIX_VERSION)
         print(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing} (summary+PR link)")
         return
     jira_preflight(project)
     priority_map = cfg.get("jira", {}).get("priority", {})
     priority = priority_map.get(category, "Medium")
     description = f"Renovate PR: {pr.html_url}\n\nReason detected: {reason}\n\nPR excerpt:\n{(pr.body or '')[:1000]}"
-    labels_to_add = cfg.get("jira", {}).get("labels", ["needs-jira"])
+    labels_to_add = cfg.get("jira", {}).get("labels", [])
     jira_resp = jira_create_issue(summary, description, labels_to_add, project, priority)
     issue_key = jira_resp.get("key", "UNKNOWN")
     comment = f"Created Jira issue {issue_key} to track this Renovate PR. Reason: {reason}"
