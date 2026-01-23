@@ -185,7 +185,11 @@ def _escape_jql(text: str) -> str:
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
 def jira_find_existing_issue(summary: str, project: str, pr_url: str) -> Optional[str]:
-    jql = f'project = "{_escape_jql(project)}" AND summary ~ "{_escape_jql(summary)}"'
+    jql = (
+        f'project = "{_escape_jql(project)}" '
+        f'AND summary ~ "{_escape_jql(summary)}" '
+        f'AND status != "Withdrawn"'
+    )
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/search"
     headers = {"Accept": "application/json", **jira_auth()}
     auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
@@ -244,15 +248,13 @@ def process_pr(repo, pr, cfg):
         return
     existing = pr_has_ticket_in_comments(pr)
     if existing:
-        if VERBOSE:
-            print(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing}")
+        print(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing}")
         return
     summary = f"Dependency update: {pr.title}"
     project = cfg.get("jira", {}).get("project", DEFAULT_JIRA_PROJECT)
     existing = jira_find_existing_issue(summary, project, pr.html_url)
     if existing:
-        if VERBOSE:
-            print(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing} (summary+PR link)")
+        print(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing} (summary+PR link)")
         return
     jira_preflight(project)
     priority_map = cfg.get("jira", {}).get("priority", {})
