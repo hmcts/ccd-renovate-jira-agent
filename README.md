@@ -76,3 +76,11 @@ Renovate -> Jira automation has all the core agent properties:
 - It takes actions: Creates Jira issues, comments on PRs, adds labels, and skips safely when rules say "no".
 - It runs autonomously: Triggered by GitHub Actions on schedule or manually; no human clicking buttons.
 - It's auditable: Logs every action, PR comments link Jira tickets, config is versioned in Git.
+
+## Why a PR Is Skipped
+
+A PR is skipped with `did not match any rule` when it does not meet any of the decision rules in `decision.py`:
+
+- Security: CVE in title/body or a `security` label, and `create_jira_for.security` is true.
+- Major: keywords like `major`, `breaking`, or `migration`, or a major version bump in title/body, and `create_jira_for.major` is true.
+- Critical dependency: PR mentions a dependency in `critical_dependencies`, and `create_jira_for.critical-dep` is true.
