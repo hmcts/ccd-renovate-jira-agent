@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 env:
-  SCHEDULE_ENABLED: "false" # Set to "true" to allow scheduled runs
   JIRA_BASE_URL: "https://tools.hmcts.net/jira"
   JIRA_PROJECT_KEY: "CCD"
 
@@ -16,7 +15,8 @@ permissions:
 
 jobs:
   run-agent:
-    if: ${{ github.event_name != 'schedule' || env.SCHEDULE_ENABLED == 'true' }}
+    # Toggle scheduled runs by changing `false` to `true`.
+    if: ${{ github.event_name != 'schedule' || false }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
