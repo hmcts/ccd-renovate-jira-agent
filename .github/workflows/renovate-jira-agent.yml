@@ -7,6 +7,7 @@ on:
 
 env:
   SCHEDULE_ENABLED: "false" # Set to "true" to allow scheduled runs
+  JIRA_BASE_URL: "https://tools.hmcts.net/jira"
 
 permissions:
   contents: read
@@ -41,7 +42,7 @@ jobs:
           # REPO_TOPIC_FILTER: "renovate-enabled"
           REPO_LIST_FILE: ./repo-list.txt
 
-          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_BASE_URL: ${{ env.JIRA_BASE_URL }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY }}
