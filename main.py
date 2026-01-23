@@ -32,8 +32,11 @@ JIRA_BASE_URL = os.getenv("JIRA_BASE_URL")
 JIRA_USER_EMAIL = os.getenv("JIRA_USER_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 JIRA_PAT = os.getenv("JIRA_PAT")
-JIRA_API_VERSION = os.getenv("JIRA_API_VERSION", "3")
+JIRA_API_VERSION = os.getenv("JIRA_API_VERSION", "2")
 DEFAULT_JIRA_PROJECT = os.getenv("JIRA_PROJECT_KEY", "DEV")
+JIRA_FIX_VERSION = os.getenv("JIRA_FIX_VERSION", "CCD CI/CD Release")
+JIRA_EPIC_LINK_FIELD = os.getenv("JIRA_EPIC_LINK_FIELD", "customfield_10008")
+JIRA_EPIC_KEY = os.getenv("JIRA_EPIC_KEY", "CCD-7071")
 
 MODE = os.getenv("MODE", "dry-run").lower()
 VERBOSE = os.getenv("VERBOSE", "").lower() in {"1", "true", "yes", "on"}
@@ -55,7 +58,7 @@ def load_repo_config(repo) -> Dict[str, Any]:
         "enabled": True,
         "create_jira_for": {"security": True, "major": True, "critical-dep": False},
         "critical_dependencies": [],
-        "labels": {"require": ["renovate"], "add": ["needs-jira"]},
+        "labels": {"require": ["renovate"], "add": ["CCD-BAU", "RENOVATE-PR"]},
         "jira": {"project": DEFAULT_JIRA_PROJECT, "priority": {"security": "High", "major": "Medium", "critical-dep": "High"}},
         "github": {"comment": True, "add_labels": True},
     }
@@ -132,7 +135,9 @@ def jira_create_issue(summary: str, description: str, labels: List[str], project
             "description": description,
             "issuetype": {"name": "Task"},
             "labels": labels,
-            "priority": {"name": priority}
+            "priority": {"name": priority},
+            "fixVersions": [{"name": JIRA_FIX_VERSION}],
+            JIRA_EPIC_LINK_FIELD: JIRA_EPIC_KEY,
         }
     }
     if MODE == "dry-run":
