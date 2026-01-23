@@ -21,6 +21,8 @@ export JIRA_PAT=<YOUR_JIRA_PAT>
 export JIRA_API_VERSION=2
 export FIX_TICKET_LABELS=true # Optional: update labels/epic/fixVersion on existing tickets
 export FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=false # Optional: allow updates even when MODE=dry-run
+export FIX_TICKET_PR_LINKS=false # Optional: add PR links to existing Jira tickets when summary matches
+export VERBOSE_JIRA_DEDUPE=false # Optional: extra diagnostics for Jira dedupe
 ```
 
 When `MODE=dry-run`, updates are skipped unless `FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=true`.
