@@ -8,6 +8,7 @@ on:
 env:
   SCHEDULE_ENABLED: "false" # Set to "true" to allow scheduled runs
   JIRA_BASE_URL: "https://tools.hmcts.net/jira"
+  JIRA_PROJECT_KEY: "CCD"
 
 permissions:
   contents: read
@@ -33,7 +34,7 @@ jobs:
 
       - name: Run Renovate->Jira agent
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RENOVATE_GITHUB_TOKEN }}
 
           # Target selection (choose one)
           # GITHUB_REPO: ${{ github.repository }}
@@ -50,7 +51,7 @@ jobs:
           #If using PAT authentication, use JIRA_PAT instead of the above two variables
           JIRA_PAT: ${{ secrets.JIRA_PAT }}
           
-          JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY }}
+          JIRA_PROJECT_KEY: ${{ env.JIRA_PROJECT_KEY }}
           JIRA_API_VERSION: "2"
 
           MODE: "dry-run" # Set to "run" to create Jira tickets, "dry-run" for testing only
