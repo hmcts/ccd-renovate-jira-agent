@@ -58,7 +58,7 @@ def load_repo_config(repo) -> Dict[str, Any]:
         "enabled": True,
         "create_jira_for": {"security": True, "major": True, "critical-dep": False},
         "critical_dependencies": [],
-        "labels": {"require": ["renovate"], "add": ["CCD-BAU", "RENOVATE-PR"]},
+        "labels": {"require": ["renovate"], "add": ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"]},
         "jira": {"project": DEFAULT_JIRA_PROJECT, "priority": {"security": "High", "major": "Medium", "critical-dep": "High"}},
         "github": {"comment": True, "add_labels": True},
     }

@@ -12,7 +12,7 @@ python -m pip install -r requirements.txt
 ## Environment Variables
 
 ```bash
-export MODE=run # or dry-run
+export MODE=dry-run # or run
 export REPO_LIST_FILE=./repo-list.txt
 export GITHUB_TOKEN=<YOUR-GITHUB-FINE-GRAINED-TOKEN>
 export JIRA_BASE_URL=https://tools.hmcts.net/jira
@@ -21,7 +21,7 @@ export JIRA_PAT=<YOUR_JIRA_PAT>
 export JIRA_API_VERSION=2
 ```
 
-## Testing
+## Quick validation of JIRA PAT
 
 ```bash
 curl -H "Authorization: Bearer $JIRA_PAT" \
@@ -29,6 +29,7 @@ curl -H "Authorization: Bearer $JIRA_PAT" \
   https://tools.hmcts.net/jira/rest/api/2/myself
 ```
 
+## run locally
 ```bash
 LOCAL_CONFIG_PATH=.github/renovate-jira.yml VERBOSE=1 python main.py
 ```
