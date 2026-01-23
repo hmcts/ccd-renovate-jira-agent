@@ -60,4 +60,5 @@ jobs:
           FIX_TICKET_LABELS_EVEN_IN_DRY_MODE: "false" # Set to "true" to update tickets even when MODE=dry-run
           FIX_TICKET_PR_LINKS: "false" # Set to "true" to add PR links to existing Jira tickets
           VERBOSE_JIRA_DEDUPE: "true" # Set to "true" for extra Jira dedupe diagnostics
+          LOCAL_CONFIG_PATH: .github/renovate-jira.yml # Use config from this repo for all targets
         run: python main.py
