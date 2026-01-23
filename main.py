@@ -58,9 +58,13 @@ def load_repo_config(repo) -> Dict[str, Any]:
         "enabled": True,
         "create_jira_for": {"security": True, "major": True, "critical-dep": False},
         "critical_dependencies": [],
-        "labels": {"require": ["renovate"], "add": ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"]},
-        "jira": {"project": DEFAULT_JIRA_PROJECT, "priority": {"security": "High", "major": "Medium", "critical-dep": "High"}},
-        "github": {"comment": True, "add_labels": True},
+        "labels": {},
+        "jira": {
+            "project": DEFAULT_JIRA_PROJECT,
+            "priority": {"security": "High", "major": "Medium", "critical-dep": "High"},
+            "labels": ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"],
+        },
+        "github": {"comment": True, "add_labels": True, "require_labels": ["renovate"]},
     }
     def merge_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
         merged = defaults.copy()
@@ -197,7 +201,10 @@ def process_pr(repo, pr, cfg):
         if VERBOSE:
             print(f"[SKIP] PR #{pr.number} in {repo.full_name} is not open")
         return
-    require_labels = set(l.lower() for l in cfg.get("labels", {}).get("require", []))
+    require_labels = set(l.lower() for l in cfg.get("github", {}).get("require_labels", []))
+    if not require_labels:
+        # Backward compatibility for older configs.
+        require_labels = set(l.lower() for l in cfg.get("labels", {}).get("require", []))
     pr_labels = set(l.name.lower() for l in pr.get_labels())
     if require_labels and not (pr_labels & require_labels):
         if VERBOSE:
@@ -221,7 +228,7 @@ def process_pr(repo, pr, cfg):
     priority = priority_map.get(category, "Medium")
     summary = f"Dependency update: {pr.title}"
     description = f"Renovate PR: {pr.html_url}\n\nReason detected: {reason}\n\nPR excerpt:\n{(pr.body or '')[:1000]}"
-    labels_to_add = cfg.get("labels", {}).get("add", ["needs-jira"])
+    labels_to_add = cfg.get("jira", {}).get("labels", ["needs-jira"])
     jira_resp = jira_create_issue(summary, description, labels_to_add, project, priority)
     issue_key = jira_resp.get("key", "UNKNOWN")
     comment = f"Created Jira issue {issue_key} to track this Renovate PR. Reason: {reason}"
