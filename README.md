@@ -39,6 +39,7 @@ LOCAL_CONFIG_PATH=.github/renovate-jira.yml VERBOSE=1 python main.py
 Example `.github/renovate-jira.yml`:
 
 ```yaml
+# Optional per-repo configuration for the Renovate->Jira agent
 enabled: true
 
 create_jira_for:
@@ -50,6 +51,11 @@ critical_dependencies:
   - spring-boot
   - log4j
   - openssl
+
+github:
+  comment: false
+  add_labels: false
+  require_labels: ["Renovate Dependencies"]
 
 jira:
   project: "CCD"
