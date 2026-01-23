@@ -43,8 +43,13 @@ jobs:
           REPO_LIST_FILE: ./repo-list.txt
 
           JIRA_BASE_URL: ${{ env.JIRA_BASE_URL }}
-          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
-          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          
+          #JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          #JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+
+          #If using PAT authentication, use JIRA_PAT instead of the above two variables
+          JIRA_PAT: ${{ secrets.JIRA_PAT }}
+          
           JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY }}
           JIRA_API_VERSION: "2"
 
