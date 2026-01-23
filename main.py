@@ -39,6 +39,8 @@ JIRA_EPIC_LINK_FIELD = os.getenv("JIRA_EPIC_LINK_FIELD", "customfield_10008")
 JIRA_EPIC_KEY = os.getenv("JIRA_EPIC_KEY", "CCD-7071")
 FIX_TICKET_LABELS = os.getenv("FIX_TICKET_LABELS", "").lower() in {"1", "true", "yes", "on"}
 FIX_TICKET_LABELS_EVEN_IN_DRY_MODE = os.getenv("FIX_TICKET_LABELS_EVEN_IN_DRY_MODE", "").lower() in {"1", "true", "yes", "on"}
+FIX_TICKET_PR_LINKS = os.getenv("FIX_TICKET_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
+VERBOSE_JIRA_DEDUPE = os.getenv("VERBOSE_JIRA_DEDUPE", "").lower() in {"1", "true", "yes", "on"}
 
 MODE = os.getenv("MODE", "dry-run").lower()
 VERBOSE = os.getenv("VERBOSE", "").lower() in {"1", "true", "yes", "on"}
@@ -186,35 +188,174 @@ def jira_preflight(project: str) -> None:
 def _escape_jql(text: str) -> str:
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
-def jira_find_existing_issue(summary: str, project: str, pr_url: str) -> Optional[str]:
-    jql = (
+def _pr_slug(pr_url: str) -> str:
+    m = re.search(r"github\\.com/([^/]+/[^/]+/pull/\\d+)", pr_url or "")
+    return m.group(1) if m else ""
+
+def _build_summary_token_jql(project: str, text: str) -> Optional[str]:
+    tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{2,}", text or "")
+    stop = {"update", "action", "actions", "bump", "dependency", "dependencies", "to", "from"}
+    keywords = [t for t in tokens if t.lower() not in stop]
+    strong = [t for t in keywords if "-" in t or any(c.isdigit() for c in t)]
+    selected = []
+    for t in strong:
+        if t not in selected:
+            selected.append(t)
+    for t in keywords:
+        if len(selected) >= 2:
+            break
+        if t not in selected:
+            selected.append(t)
+    if not selected:
+        return None
+    clauses = " AND ".join([f'summary ~ "{_escape_jql(t)}"' for t in selected[:2]])
+    return (
         f'project = "{_escape_jql(project)}" '
-        f'AND summary ~ "{_escape_jql(summary)}" '
+        f'AND {clauses} '
         f'AND status != "Withdrawn"'
     )
+
+def jira_find_existing_issue(summary: str, project: str, pr_url: str) -> Optional[str]:
+    title_candidate = summary.replace("Dependency update: ", "").strip()
+    title_candidate = re.sub(r"^[A-Z]+-\d+\s*::\s*", "", title_candidate)
+    jql_candidates = [
+        summary,
+        title_candidate,
+    ]
+    token_jql = _build_summary_token_jql(project, title_candidate)
+    if VERBOSE and VERBOSE_JIRA_DEDUPE:
+        print(f"[INFO] Jira search candidates: {jql_candidates}")
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/search"
     headers = {"Accept": "application/json", **jira_auth()}
     auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
-    params = {"jql": jql, "maxResults": 1, "fields": "key,summary,description"}
+    for cand in [c for c in jql_candidates if c]:
+        jql = (
+            f'project = "{_escape_jql(project)}" '
+            f'AND summary ~ "{_escape_jql(cand)}" '
+            f'AND status != "Withdrawn"'
+        )
+        params = {"jql": jql, "maxResults": 5, "fields": "key,summary,description"}
+        try:
+            resp = requests.get(url, headers=headers, params=params, auth=auth)
+            resp.raise_for_status()
+            data = resp.json()
+            issues = data.get("issues", [])
+            if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                keys = [i.get("key") for i in issues]
+                print(f"[INFO] Jira search JQL={jql} -> {keys}")
+            for issue in issues:
+                issue_key = issue.get("key")
+                description = (issue.get("fields", {}) or {}).get("description") or ""
+                if pr_url and pr_url in description:
+                    if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                        print(f"[INFO] Jira {issue_key} matched PR URL in description")
+                    return issue_key
+                if pr_url and issue_key and jira_issue_has_pr_link(issue_key, pr_url):
+                    if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                        print(f"[INFO] Jira {issue_key} matched PR URL in links")
+                    return issue_key
+                if pr_url and issue_key and FIX_TICKET_PR_LINKS:
+                    if jira_add_pr_remotelink(issue_key, pr_url):
+                        if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                            print(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
+                        return issue_key
+        except Exception as e:
+            if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                print(f"[WARN] Jira search failed for summary match: {e}")
+    if token_jql:
+        try:
+            resp = requests.get(url, headers=headers, params={"jql": token_jql, "maxResults": 5, "fields": "key,summary,description"}, auth=auth)
+            resp.raise_for_status()
+            data = resp.json()
+            issues = data.get("issues", [])
+            if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                keys = [i.get("key") for i in issues]
+                print(f"[INFO] Jira search JQL={token_jql} -> {keys}")
+            for issue in issues:
+                issue_key = issue.get("key")
+                description = (issue.get("fields", {}) or {}).get("description") or ""
+                if pr_url and pr_url in description:
+                    if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                        print(f"[INFO] Jira {issue_key} matched PR URL in description")
+                    return issue_key
+                if pr_url and issue_key and jira_issue_has_pr_link(issue_key, pr_url):
+                    if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                        print(f"[INFO] Jira {issue_key} matched PR URL in links")
+                    return issue_key
+                if pr_url and issue_key and FIX_TICKET_PR_LINKS:
+                    if jira_add_pr_remotelink(issue_key, pr_url):
+                        if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                            print(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
+                        return issue_key
+        except Exception as e:
+            if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                print(f"[WARN] Jira token search failed: {e}")
+    return None
+
+def jira_issue_has_pr_link(issue_key: str, pr_url: str) -> bool:
+    pr_slug = _pr_slug(pr_url)
+    url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}/remotelink"
+    headers = {"Accept": "application/json", **jira_auth()}
+    auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
     try:
-        resp = requests.get(url, headers=headers, params=params, auth=auth)
+        resp = requests.get(url, headers=headers, auth=auth)
         resp.raise_for_status()
-        data = resp.json()
-        issues = data.get("issues", [])
-        if issues:
-            description = (issues[0].get("fields", {}) or {}).get("description") or ""
-            if pr_url and pr_url in description:
-                return issues[0].get("key")
+        links = resp.json() or []
+        for link in links:
+            obj = link.get("object", {}) or {}
+            link_url = obj.get("url") or ""
+            link_title = obj.get("title") or ""
+            if pr_url and pr_url in link_url:
+                return True
+            if pr_slug and pr_slug in link_url:
+                return True
+            if pr_slug and pr_slug in link_title:
+                return True
     except Exception as e:
         if VERBOSE:
-            print(f"[WARN] Jira search failed for summary match: {e}")
-    return None
+            print(f"[WARN] Jira remotelink check failed for {issue_key}: {e}")
+
+    issue = jira_get_issue(issue_key)
+    if not issue:
+        return False
+    fields = issue.get("fields", {}) or {}
+    for link in fields.get("issuelinks") or []:
+        for side in ("inwardIssue", "outwardIssue"):
+            issue_obj = link.get(side) or {}
+            issue_fields = issue_obj.get("fields", {}) or {}
+            summary = issue_fields.get("summary") or ""
+            if pr_url and pr_url in summary:
+                return True
+            if pr_slug and pr_slug in summary:
+                return True
+    return False
+
+def jira_add_pr_remotelink(issue_key: str, pr_url: str) -> bool:
+    if not pr_url:
+        return False
+    if MODE == "dry-run" and not FIX_TICKET_LABELS_EVEN_IN_DRY_MODE:
+        print(f"[DRY-RUN] Would add PR link to Jira {issue_key}: {pr_url}")
+        return True
+    url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}/remotelink"
+    headers = {"Accept": "application/json", **jira_auth()}
+    auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
+    payload = {"object": {"url": pr_url, "title": f"PR: {pr_url}"}}
+    try:
+        resp = requests.post(url, json=payload, headers=headers, auth=auth)
+        resp.raise_for_status()
+        if VERBOSE:
+            print(f"[INFO] Added PR link to Jira {issue_key}: {pr_url}")
+        return True
+    except Exception as e:
+        if VERBOSE:
+            print(f"[WARN] Jira remotelink add failed for {issue_key}: {e}")
+    return False
 
 def jira_get_issue(issue_key: str) -> Optional[Dict[str, Any]]:
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}"
     headers = {"Accept": "application/json", **jira_auth()}
     auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
-    params = {"fields": f"labels,fixVersions,status,{JIRA_EPIC_LINK_FIELD}"}
+    params = {"fields": f"labels,fixVersions,status,{JIRA_EPIC_LINK_FIELD},issuelinks"}
     try:
         resp = requests.get(url, headers=headers, params=params, auth=auth)
         resp.raise_for_status()
