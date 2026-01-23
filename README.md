@@ -1,4 +1,4 @@
-# Renovate -> Jira Agent v1
+# Renovate -> Jira Agent v4
 
 Supports per-repo configuration via `.github/renovate-jira.yml`.
 
@@ -32,6 +32,32 @@ curl -H "Authorization: Bearer $JIRA_PAT" \
 ## run locally
 ```bash
 LOCAL_CONFIG_PATH=.github/renovate-jira.yml VERBOSE=1 python main.py
+```
+
+## Per-Repo Configuration
+
+Example `.github/renovate-jira.yml`:
+
+```yaml
+enabled: true
+
+create_jira_for:
+  security: true
+  major: true
+  critical-dep: false
+
+critical_dependencies:
+  - spring-boot
+  - log4j
+  - openssl
+
+jira:
+  project: "CCD"
+  labels: ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"]
+  priority:
+    security: "2-High"
+    major: "3-Medium"
+    critical-dep: "2-High"
 ```
 
 ## What It Does

@@ -11,14 +11,14 @@ critical_dependencies:
   - log4j
   - openssl
 
-labels:
-  require: ["Renovate Dependencies"]
 github:
   comment: false
   add_labels: false
+  require_labels: ["Renovate Dependencies"]
 
 jira:
   project: "CCD"
+  labels: ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"]
   priority:
     security: "2-High"
     major: "3-Medium"
