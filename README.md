@@ -1,4 +1,4 @@
-# Renovate -> Jira Agent v4
+# Renovate -> Jira Agent v1
 
 Supports per-repo configuration via `.github/renovate-jira.yml`.
 
