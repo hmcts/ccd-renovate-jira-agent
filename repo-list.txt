@@ -4,3 +4,4 @@
 # org-b/team-repo
 
 hmcts/ccd-definition-store-api
+hmcts/ccd-data-store-api

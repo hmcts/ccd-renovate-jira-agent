@@ -19,6 +19,18 @@ from decision import needs_jira
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger("renovate-jira-agent")
 
+LOG_PREFIX = ""
+
+def _log(message: str) -> None:
+    print(f"{LOG_PREFIX}{message}")
+
+def _elog(message: str) -> None:
+    print(f"{LOG_PREFIX}{message}", file=sys.stderr)
+
+def _vlog(message: str) -> None:
+    if VERBOSE:
+        _log(message)
+
 # Env/config
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO = os.getenv("GITHUB_REPO")
@@ -151,7 +163,7 @@ def jira_create_issue(summary: str, description: str, labels: List[str], project
         }
     }
     if MODE == "dry-run":
-        print("[DRY-RUN] Would create Jira issue in project {}: {}".format(project, summary))
+        _log("[DRY-RUN] Would create Jira issue in project {}: {}".format(project, summary))
         return {"key": "DRY-RUN-1"}
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue"
     headers = {"Accept": "application/json", **jira_auth()}
@@ -224,7 +236,7 @@ def jira_find_existing_issue(summary: str, project: str, pr_url: str) -> Optiona
     ]
     token_jql = _build_summary_token_jql(project, title_candidate)
     if VERBOSE and VERBOSE_JIRA_DEDUPE:
-        print(f"[INFO] Jira search candidates: {jql_candidates}")
+        _log(f"[INFO] Jira search candidates: {jql_candidates}")
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/search"
     headers = {"Accept": "application/json", **jira_auth()}
     auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
@@ -242,26 +254,26 @@ def jira_find_existing_issue(summary: str, project: str, pr_url: str) -> Optiona
             issues = data.get("issues", [])
             if VERBOSE and VERBOSE_JIRA_DEDUPE:
                 keys = [i.get("key") for i in issues]
-                print(f"[INFO] Jira search JQL={jql} -> {keys}")
+                _log(f"[INFO] Jira search JQL={jql} -> {keys}")
             for issue in issues:
                 issue_key = issue.get("key")
                 description = (issue.get("fields", {}) or {}).get("description") or ""
                 if pr_url and pr_url in description:
                     if VERBOSE and VERBOSE_JIRA_DEDUPE:
-                        print(f"[INFO] Jira {issue_key} matched PR URL in description")
+                        _log(f"[INFO] Jira {issue_key} matched PR URL in description")
                     return issue_key
                 if pr_url and issue_key and jira_issue_has_pr_link(issue_key, pr_url):
                     if VERBOSE and VERBOSE_JIRA_DEDUPE:
-                        print(f"[INFO] Jira {issue_key} matched PR URL in links")
+                        _log(f"[INFO] Jira {issue_key} matched PR URL in links")
                     return issue_key
                 if pr_url and issue_key and FIX_TICKET_PR_LINKS:
                     if jira_add_pr_remotelink(issue_key, pr_url):
                         if VERBOSE and VERBOSE_JIRA_DEDUPE:
-                            print(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
+                            _log(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
                         return issue_key
         except Exception as e:
             if VERBOSE and VERBOSE_JIRA_DEDUPE:
-                print(f"[WARN] Jira search failed for summary match: {e}")
+                _log(f"[WARN] Jira search failed for summary match: {e}")
     if token_jql:
         try:
             resp = requests.get(url, headers=headers, params={"jql": token_jql, "maxResults": 5, "fields": "key,summary,description"}, auth=auth)
@@ -270,26 +282,26 @@ def jira_find_existing_issue(summary: str, project: str, pr_url: str) -> Optiona
             issues = data.get("issues", [])
             if VERBOSE and VERBOSE_JIRA_DEDUPE:
                 keys = [i.get("key") for i in issues]
-                print(f"[INFO] Jira search JQL={token_jql} -> {keys}")
+                _log(f"[INFO] Jira search JQL={token_jql} -> {keys}")
             for issue in issues:
                 issue_key = issue.get("key")
                 description = (issue.get("fields", {}) or {}).get("description") or ""
                 if pr_url and pr_url in description:
                     if VERBOSE and VERBOSE_JIRA_DEDUPE:
-                        print(f"[INFO] Jira {issue_key} matched PR URL in description")
+                        _log(f"[INFO] Jira {issue_key} matched PR URL in description")
                     return issue_key
                 if pr_url and issue_key and jira_issue_has_pr_link(issue_key, pr_url):
                     if VERBOSE and VERBOSE_JIRA_DEDUPE:
-                        print(f"[INFO] Jira {issue_key} matched PR URL in links")
+                        _log(f"[INFO] Jira {issue_key} matched PR URL in links")
                     return issue_key
                 if pr_url and issue_key and FIX_TICKET_PR_LINKS:
                     if jira_add_pr_remotelink(issue_key, pr_url):
                         if VERBOSE and VERBOSE_JIRA_DEDUPE:
-                            print(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
+                            _log(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
                         return issue_key
         except Exception as e:
             if VERBOSE and VERBOSE_JIRA_DEDUPE:
-                print(f"[WARN] Jira token search failed: {e}")
+                _log(f"[WARN] Jira token search failed: {e}")
     return None
 
 def jira_issue_has_pr_link(issue_key: str, pr_url: str) -> bool:
@@ -312,8 +324,7 @@ def jira_issue_has_pr_link(issue_key: str, pr_url: str) -> bool:
             if pr_slug and pr_slug in link_title:
                 return True
     except Exception as e:
-        if VERBOSE:
-            print(f"[WARN] Jira remotelink check failed for {issue_key}: {e}")
+        _vlog(f"[WARN] Jira remotelink check failed for {issue_key}: {e}")
 
     issue = jira_get_issue(issue_key)
     if not issue:
@@ -334,7 +345,7 @@ def jira_add_pr_remotelink(issue_key: str, pr_url: str) -> bool:
     if not pr_url:
         return False
     if MODE == "dry-run" and not FIX_TICKET_LABELS_EVEN_IN_DRY_MODE:
-        print(f"[DRY-RUN] Would add PR link to Jira {issue_key}: {pr_url}")
+        _log(f"[DRY-RUN] Would add PR link to Jira {issue_key}: {pr_url}")
         return True
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}/remotelink"
     headers = {"Accept": "application/json", **jira_auth()}
@@ -343,12 +354,10 @@ def jira_add_pr_remotelink(issue_key: str, pr_url: str) -> bool:
     try:
         resp = requests.post(url, json=payload, headers=headers, auth=auth)
         resp.raise_for_status()
-        if VERBOSE:
-            print(f"[INFO] Added PR link to Jira {issue_key}: {pr_url}")
+        _vlog(f"[INFO] Added PR link to Jira {issue_key}: {pr_url}")
         return True
     except Exception as e:
-        if VERBOSE:
-            print(f"[WARN] Jira remotelink add failed for {issue_key}: {e}")
+        _vlog(f"[WARN] Jira remotelink add failed for {issue_key}: {e}")
     return False
 
 def jira_get_issue(issue_key: str) -> Optional[Dict[str, Any]]:
@@ -361,8 +370,7 @@ def jira_get_issue(issue_key: str) -> Optional[Dict[str, Any]]:
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
-        if VERBOSE:
-            print(f"[WARN] Jira get issue failed for {issue_key}: {e}")
+        _vlog(f"[WARN] Jira get issue failed for {issue_key}: {e}")
     return None
 
 def jira_is_withdrawn(issue_key: str) -> bool:
@@ -374,7 +382,7 @@ def jira_is_withdrawn(issue_key: str) -> bool:
 
 def jira_update_issue(issue_key: str, fields: Dict[str, Any]) -> None:
     if MODE == "dry-run" and not FIX_TICKET_LABELS_EVEN_IN_DRY_MODE:
-        print(f"[DRY-RUN] Would update Jira {issue_key} fields: {list(fields.keys())}")
+        _log(f"[DRY-RUN] Would update Jira {issue_key} fields: {list(fields.keys())}")
         return
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}"
     headers = {"Accept": "application/json", **jira_auth()}
@@ -392,8 +400,7 @@ def jira_ensure_ticket_fields(issue_key: str, desired_labels: List[str], fix_ver
     issue = jira_get_issue(issue_key)
     if not issue:
         return
-    if VERBOSE:
-        print(f"[INFO] Found Jira {issue_key}; checking labels/epic/fixVersion")
+    _vlog(f"[INFO] Found Jira {issue_key}; checking labels/epic/fixVersion")
     fields = issue.get("fields", {}) or {}
     updates: Dict[str, Any] = {}
 
@@ -411,11 +418,10 @@ def jira_ensure_ticket_fields(issue_key: str, desired_labels: List[str], fix_ver
         updates[JIRA_EPIC_LINK_FIELD] = JIRA_EPIC_KEY
 
     if updates:
-        if VERBOSE:
-            print(f"[INFO] Updating Jira {issue_key} fields: {sorted(updates.keys())}")
+        _vlog(f"[INFO] Updating Jira {issue_key} fields: {sorted(updates.keys())}")
         jira_update_issue(issue_key, updates)
-    elif VERBOSE:
-        print(f"[INFO] Jira {issue_key} already has desired labels/epic/fixVersion")
+    else:
+        _vlog(f"[INFO] Jira {issue_key} already has desired labels/epic/fixVersion")
 
 def pr_has_ticket_in_comments(pr) -> Optional[str]:
     import re
@@ -431,70 +437,72 @@ def pr_has_ticket_in_comments(pr) -> Optional[str]:
     return None
 
 def process_pr(repo, pr, cfg):
-    if not cfg.get("enabled", True):
-        if VERBOSE:
-            print(f"[SKIP] Repo disabled for PR #{getattr(pr,'number','?')} in {repo.full_name}")
-        return
-    if pr.state != "open":
-        if VERBOSE:
-            print(f"[SKIP] PR #{pr.number} in {repo.full_name} is not open")
-        return
-    require_labels = set(l.lower() for l in cfg.get("github", {}).get("require_labels", []))
-    if not require_labels:
-        # Backward compatibility for older configs.
-        require_labels = set(l.lower() for l in cfg.get("labels", {}).get("require", []))
-    pr_labels = set(l.name.lower() for l in pr.get_labels())
-    if require_labels and not (pr_labels & require_labels):
-        if VERBOSE:
-            print(f"[SKIP] PR #{pr.number} in {repo.full_name} missing required labels: {sorted(require_labels)}")
-        return
-    category, reason = needs_jira(pr.title or "", pr.body or "", [l.name for l in pr.get_labels()],
-                                 critical_deps=cfg.get("critical_dependencies", []),
-                                 create_jira_for=cfg.get("create_jira_for", {}))
-    if not category:
-        if VERBOSE:
-            print(f"[SKIP] PR #{pr.number} in {repo.full_name} did not match any rule")
-        return
-    existing = pr_has_ticket_in_comments(pr)
-    if existing and jira_is_withdrawn(existing):
-        if VERBOSE:
-            print(f"[INFO] Jira {existing} is Withdrawn; creating a new ticket")
-        existing = None
-    if existing:
-        if FIX_TICKET_LABELS:
-            labels_to_add = cfg.get("jira", {}).get("labels", [])
-            jira_ensure_ticket_fields(existing, labels_to_add, JIRA_FIX_VERSION)
-        print(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing}")
-        return
-    summary = f"Dependency update: {pr.title}"
-    project = cfg.get("jira", {}).get("project", DEFAULT_JIRA_PROJECT)
-    existing = jira_find_existing_issue(summary, project, pr.html_url)
-    if existing:
-        if FIX_TICKET_LABELS:
-            labels_to_add = cfg.get("jira", {}).get("labels", [])
-            jira_ensure_ticket_fields(existing, labels_to_add, JIRA_FIX_VERSION)
-        print(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing} (summary+PR link)")
-        return
-    jira_preflight(project)
-    priority_map = cfg.get("jira", {}).get("priority", {})
-    priority = priority_map.get(category, "Medium")
-    description = f"Renovate PR: {pr.html_url}\n\nReason detected: {reason}\n\nPR excerpt:\n{(pr.body or '')[:1000]}"
-    labels_to_add = cfg.get("jira", {}).get("labels", [])
-    jira_resp = jira_create_issue(summary, description, labels_to_add, project, priority)
-    issue_key = jira_resp.get("key", "UNKNOWN")
-    comment = f"Created Jira issue {issue_key} to track this Renovate PR. Reason: {reason}"
-    if MODE != "dry-run":
-        if cfg.get("github", {}).get("comment", True):
-            try:
-                pr.create_issue_comment(comment)
-            except Exception as e:
-                print(f"Warning: failed to comment on PR #{pr.number} in {repo.full_name}: {e}", file=sys.stderr)
-        if cfg.get("github", {}).get("add_labels", True):
-            try:
-                pr.add_to_labels(*labels_to_add)
-            except Exception as e:
-                print(f"Warning: failed to add labels on PR #{pr.number} in {repo.full_name}: {e}", file=sys.stderr)
-    print(f"Created Jira {issue_key} for PR #{pr.number} in {repo.full_name}")
+    global LOG_PREFIX
+    print(f"Processing PR #{pr.number} ({pr.title or ''})")
+    previous_prefix = LOG_PREFIX
+    LOG_PREFIX = "\t"
+    try:
+        if not cfg.get("enabled", True):
+            _vlog(f"[SKIP] Repo disabled for PR #{getattr(pr,'number','?')} in {repo.full_name}")
+            return
+        if pr.state != "open":
+            _vlog(f"[SKIP] PR #{pr.number} in {repo.full_name} is not open")
+            return
+        require_labels = set(l.lower() for l in cfg.get("github", {}).get("require_labels", []))
+        if not require_labels:
+            # Backward compatibility for older configs.
+            require_labels = set(l.lower() for l in cfg.get("labels", {}).get("require", []))
+        pr_labels = set(l.name.lower() for l in pr.get_labels())
+        if require_labels and not (pr_labels & require_labels):
+            _vlog(f"[SKIP] PR #{pr.number} in {repo.full_name} missing required labels: {sorted(require_labels)}")
+            return
+        category, reason = needs_jira(pr.title or "", pr.body or "", [l.name for l in pr.get_labels()],
+                                     critical_deps=cfg.get("critical_dependencies", []),
+                                     create_jira_for=cfg.get("create_jira_for", {}))
+        if not category:
+            _vlog(f"[SKIP] PR #{pr.number} in {repo.full_name} did not match any rule")
+            return
+        existing = pr_has_ticket_in_comments(pr)
+        if existing and jira_is_withdrawn(existing):
+            _vlog(f"[INFO] Jira {existing} is Withdrawn; creating a new ticket")
+            existing = None
+        if existing:
+            if FIX_TICKET_LABELS:
+                labels_to_add = cfg.get("jira", {}).get("labels", [])
+                jira_ensure_ticket_fields(existing, labels_to_add, JIRA_FIX_VERSION)
+            _log(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing}")
+            return
+        summary = f"Dependency update: {pr.title}"
+        project = cfg.get("jira", {}).get("project", DEFAULT_JIRA_PROJECT)
+        existing = jira_find_existing_issue(summary, project, pr.html_url)
+        if existing:
+            if FIX_TICKET_LABELS:
+                labels_to_add = cfg.get("jira", {}).get("labels", [])
+                jira_ensure_ticket_fields(existing, labels_to_add, JIRA_FIX_VERSION)
+            _log(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing} (summary+PR link)")
+            return
+        jira_preflight(project)
+        priority_map = cfg.get("jira", {}).get("priority", {})
+        priority = priority_map.get(category, "Medium")
+        description = f"Renovate PR: {pr.html_url}\n\nReason detected: {reason}\n\nPR excerpt:\n{(pr.body or '')[:1000]}"
+        labels_to_add = cfg.get("jira", {}).get("labels", [])
+        jira_resp = jira_create_issue(summary, description, labels_to_add, project, priority)
+        issue_key = jira_resp.get("key", "UNKNOWN")
+        comment = f"Created Jira issue {issue_key} to track this Renovate PR. Reason: {reason}"
+        if MODE != "dry-run":
+            if cfg.get("github", {}).get("comment", True):
+                try:
+                    pr.create_issue_comment(comment)
+                except Exception as e:
+                    _elog(f"Warning: failed to comment on PR #{pr.number} in {repo.full_name}: {e}")
+            if cfg.get("github", {}).get("add_labels", True):
+                try:
+                    pr.add_to_labels(*labels_to_add)
+                except Exception as e:
+                    _elog(f"Warning: failed to add labels on PR #{pr.number} in {repo.full_name}: {e}")
+        _log(f"Created Jira {issue_key} for PR #{pr.number} in {repo.full_name}")
+    finally:
+        LOG_PREFIX = previous_prefix
 
 def main():
     repos = get_target_repos(gh)
