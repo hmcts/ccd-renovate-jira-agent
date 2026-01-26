@@ -27,6 +27,7 @@ export FIX_TICKET_LABELS=true # Optional: update labels/epic/fixVersion on exist
 export FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=false # Optional: allow updates even when MODE=dry-run
 export FIX_TICKET_PR_LINKS=false # Optional: add PR links to existing Jira tickets when summary matches
 export VERBOSE_JIRA_DEDUPE=false # Optional: extra diagnostics for Jira dedupe
+export CREATE_PR_LINKS=true # Optional: add PR links on new Jira tickets
 ```
 
 When `MODE=dry-run`, updates are skipped unless `FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=true`.
