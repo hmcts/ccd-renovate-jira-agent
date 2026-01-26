@@ -53,6 +53,7 @@ FIX_TICKET_LABELS = os.getenv("FIX_TICKET_LABELS", "").lower() in {"1", "true", 
 FIX_TICKET_LABELS_EVEN_IN_DRY_MODE = os.getenv("FIX_TICKET_LABELS_EVEN_IN_DRY_MODE", "").lower() in {"1", "true", "yes", "on"}
 FIX_TICKET_PR_LINKS = os.getenv("FIX_TICKET_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
 VERBOSE_JIRA_DEDUPE = os.getenv("VERBOSE_JIRA_DEDUPE", "").lower() in {"1", "true", "yes", "on"}
+CREATE_PR_LINKS = os.getenv("CREATE_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
 
 MODE = os.getenv("MODE", "dry-run").lower()
 VERBOSE = os.getenv("VERBOSE", "").lower() in {"1", "true", "yes", "on"}
@@ -261,6 +262,10 @@ def jira_find_existing_issue(summary: str, project: str, pr_url: str) -> Optiona
                 if pr_url and pr_url in description:
                     if VERBOSE and VERBOSE_JIRA_DEDUPE:
                         _log(f"[INFO] Jira {issue_key} matched PR URL in description")
+                    if pr_url and issue_key and FIX_TICKET_PR_LINKS:
+                        if jira_add_pr_remotelink(issue_key, pr_url):
+                            if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                                _log(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
                     return issue_key
                 if pr_url and issue_key and jira_issue_has_pr_link(issue_key, pr_url):
                     if VERBOSE and VERBOSE_JIRA_DEDUPE:
@@ -289,6 +294,10 @@ def jira_find_existing_issue(summary: str, project: str, pr_url: str) -> Optiona
                 if pr_url and pr_url in description:
                     if VERBOSE and VERBOSE_JIRA_DEDUPE:
                         _log(f"[INFO] Jira {issue_key} matched PR URL in description")
+                    if pr_url and issue_key and FIX_TICKET_PR_LINKS:
+                        if jira_add_pr_remotelink(issue_key, pr_url):
+                            if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                                _log(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
                     return issue_key
                 if pr_url and issue_key and jira_issue_has_pr_link(issue_key, pr_url):
                     if VERBOSE and VERBOSE_JIRA_DEDUPE:
@@ -488,6 +497,8 @@ def process_pr(repo, pr, cfg):
         labels_to_add = cfg.get("jira", {}).get("labels", [])
         jira_resp = jira_create_issue(summary, description, labels_to_add, project, priority)
         issue_key = jira_resp.get("key", "UNKNOWN")
+        if pr.html_url and CREATE_PR_LINKS:
+            jira_add_pr_remotelink(issue_key, pr.html_url)
         comment = f"Created Jira issue {issue_key} to track this Renovate PR. Reason: {reason}"
         if MODE != "dry-run":
             if cfg.get("github", {}).get("comment", True):
