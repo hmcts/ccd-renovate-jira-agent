@@ -54,6 +54,8 @@ FIX_TICKET_LABELS_EVEN_IN_DRY_MODE = os.getenv("FIX_TICKET_LABELS_EVEN_IN_DRY_MO
 FIX_TICKET_PR_LINKS = os.getenv("FIX_TICKET_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
 VERBOSE_JIRA_DEDUPE = os.getenv("VERBOSE_JIRA_DEDUPE", "").lower() in {"1", "true", "yes", "on"}
 CREATE_PR_LINKS = os.getenv("CREATE_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
+JIRA_TARGET_STATUS = os.getenv("JIRA_TARGET_STATUS", "")
+JIRA_TARGET_STATUS_PATH = [s.strip() for s in os.getenv("JIRA_TARGET_STATUS_PATH", "").split(",") if s.strip()]
 
 MODE = os.getenv("MODE", "dry-run").lower()
 VERBOSE = os.getenv("VERBOSE", "").lower() in {"1", "true", "yes", "on"}
@@ -353,6 +355,8 @@ def jira_issue_has_pr_link(issue_key: str, pr_url: str) -> bool:
 def jira_add_pr_remotelink(issue_key: str, pr_url: str) -> bool:
     if not pr_url:
         return False
+    if jira_issue_has_pr_link(issue_key, pr_url):
+        return False
     if MODE == "dry-run" and not FIX_TICKET_LABELS_EVEN_IN_DRY_MODE:
         _log(f"[DRY-RUN] Would add PR link to Jira {issue_key}: {pr_url}")
         return True
@@ -389,6 +393,13 @@ def jira_is_withdrawn(issue_key: str) -> bool:
     status = (issue.get("fields", {}) or {}).get("status", {}) or {}
     return (status.get("name") or "").lower() == "withdrawn"
 
+def jira_get_status_name(issue_key: str) -> str:
+    issue = jira_get_issue(issue_key)
+    if not issue:
+        return ""
+    status = (issue.get("fields", {}) or {}).get("status", {}) or {}
+    return (status.get("name") or "").strip()
+
 def jira_update_issue(issue_key: str, fields: Dict[str, Any]) -> None:
     if MODE == "dry-run" and not FIX_TICKET_LABELS_EVEN_IN_DRY_MODE:
         _log(f"[DRY-RUN] Would update Jira {issue_key} fields: {list(fields.keys())}")
@@ -404,6 +415,54 @@ def jira_update_issue(issue_key: str, fields: Dict[str, Any]) -> None:
         except ValueError:
             err = {"message": (resp.text or "").strip().replace("\n", " ")[:500]}
         raise RuntimeError(f"Jira update failed for {issue_key} (status {resp.status_code}): {err}") from None
+
+def jira_transition_issue(issue_key: str, status_name: str) -> None:
+    if not status_name:
+        return
+    current_status = jira_get_status_name(issue_key)
+    if current_status and current_status.lower() == status_name.lower():
+        _vlog(f"[INFO] Jira {issue_key} already in status {current_status}")
+        return
+    if MODE == "dry-run" and not FIX_TICKET_LABELS_EVEN_IN_DRY_MODE:
+        _log(f"[DRY-RUN] Would transition Jira {issue_key} to status {status_name}")
+        return
+    base = JIRA_BASE_URL.rstrip("/")
+    headers = {"Accept": "application/json", **jira_auth()}
+    auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
+    list_url = f"{base}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}/transitions"
+    try:
+        resp = requests.get(list_url, headers=headers, auth=auth)
+        resp.raise_for_status()
+        data = resp.json()
+        transitions = data.get("transitions", [])
+        if VERBOSE:
+            names = [t.get("name") for t in transitions if t.get("name")]
+            _log(f"[INFO] Jira {issue_key} available transitions: {names}")
+        transition_id = None
+        for t in transitions:
+            if (t.get("name") or "").lower() == status_name.lower():
+                transition_id = t.get("id")
+                break
+        if not transition_id:
+            if VERBOSE:
+                _log(f"[INFO] Jira {issue_key} has no transition to status {status_name}")
+            return
+        payload = {"transition": {"id": transition_id}}
+        resp = requests.post(list_url, json=payload, headers=headers, auth=auth)
+        resp.raise_for_status()
+        _vlog(f"[INFO] Transitioned Jira {issue_key} to status {status_name}")
+    except Exception as e:
+        _vlog(f"[WARN] Jira transition failed for {issue_key}: {e}")
+
+def jira_transition_issue_path(issue_key: str, statuses: List[str]) -> None:
+    if not statuses:
+        return
+    current_status = jira_get_status_name(issue_key)
+    if current_status and current_status.lower() == statuses[-1].lower():
+        _vlog(f"[INFO] Jira {issue_key} already in status {current_status}")
+        return
+    for status in statuses:
+        jira_transition_issue(issue_key, status)
 
 def jira_ensure_ticket_fields(issue_key: str, desired_labels: List[str], fix_version: str) -> None:
     issue = jira_get_issue(issue_key)
@@ -431,6 +490,10 @@ def jira_ensure_ticket_fields(issue_key: str, desired_labels: List[str], fix_ver
         jira_update_issue(issue_key, updates)
     else:
         _vlog(f"[INFO] Jira {issue_key} already has desired labels/epic/fixVersion")
+    if JIRA_TARGET_STATUS_PATH:
+        jira_transition_issue_path(issue_key, JIRA_TARGET_STATUS_PATH)
+    elif JIRA_TARGET_STATUS:
+        jira_transition_issue(issue_key, JIRA_TARGET_STATUS)
 
 def pr_has_ticket_in_comments(pr) -> Optional[str]:
     import re
@@ -499,6 +562,10 @@ def process_pr(repo, pr, cfg):
         issue_key = jira_resp.get("key", "UNKNOWN")
         if pr.html_url and CREATE_PR_LINKS:
             jira_add_pr_remotelink(issue_key, pr.html_url)
+        if JIRA_TARGET_STATUS_PATH:
+            jira_transition_issue_path(issue_key, JIRA_TARGET_STATUS_PATH)
+        elif JIRA_TARGET_STATUS:
+            jira_transition_issue(issue_key, JIRA_TARGET_STATUS)
         comment = f"Created Jira issue {issue_key} to track this Renovate PR. Reason: {reason}"
         if MODE != "dry-run":
             if cfg.get("github", {}).get("comment", True):
