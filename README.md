@@ -28,6 +28,8 @@ export FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=false # Optional: allow updates even w
 export FIX_TICKET_PR_LINKS=false # Optional: add PR links to existing Jira tickets when summary matches
 export VERBOSE_JIRA_DEDUPE=false # Optional: extra diagnostics for Jira dedupe
 export CREATE_PR_LINKS=true # Optional: add PR links on new Jira tickets
+export JIRA_TARGET_STATUS="To Do" # Optional: transition tickets to this status
+export JIRA_TARGET_STATUS_PATH="Blocked,To Do" # Optional: comma-separated transition path
 ```
 
 When `MODE=dry-run`, updates are skipped unless `FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=true`.
