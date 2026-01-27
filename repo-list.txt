@@ -3,6 +3,6 @@
 # org-a/service-one
 # org-b/team-repo
 
-hmcts/ccd-definition-store-api
-hmcts/ccd-data-store-api
+#hmcts/ccd-definition-store-api
+#hmcts/ccd-data-store-api
 hmcts/ccd-user-profile-api
