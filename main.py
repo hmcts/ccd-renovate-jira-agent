@@ -56,6 +56,16 @@ VERBOSE_JIRA_DEDUPE = os.getenv("VERBOSE_JIRA_DEDUPE", "").lower() in {"1", "tru
 CREATE_PR_LINKS = os.getenv("CREATE_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
 JIRA_TARGET_STATUS = os.getenv("JIRA_TARGET_STATUS", "")
 JIRA_TARGET_STATUS_PATH = [s.strip() for s in os.getenv("JIRA_TARGET_STATUS_PATH", "").split(",") if s.strip()]
+JIRA_SKIP_STATUSES = {s.strip().lower() for s in os.getenv("JIRA_SKIP_STATUSES", "Resume Development,Resume QA,Resume Release").split(",") if s.strip()}
+
+def can_mutate_jira() -> bool:
+    return MODE != "dry-run" or FIX_TICKET_LABELS_EVEN_IN_DRY_MODE
+
+def can_add_pr_links() -> bool:
+    return MODE != "dry-run"
+
+def can_transition_jira() -> bool:
+    return MODE != "dry-run"
 
 MODE = os.getenv("MODE", "dry-run").lower()
 VERBOSE = os.getenv("VERBOSE", "").lower() in {"1", "true", "yes", "on"}
@@ -264,16 +274,16 @@ def jira_find_existing_issue(summary: str, project: str, pr_url: str) -> Optiona
                 if pr_url and pr_url in description:
                     if VERBOSE and VERBOSE_JIRA_DEDUPE:
                         _log(f"[INFO] Jira {issue_key} matched PR URL in description")
-                    if pr_url and issue_key and FIX_TICKET_PR_LINKS:
-                        if jira_add_pr_remotelink(issue_key, pr_url):
-                            if VERBOSE and VERBOSE_JIRA_DEDUPE:
-                                _log(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
+            if pr_url and issue_key and FIX_TICKET_PR_LINKS and can_add_pr_links():
+                if jira_add_pr_remotelink(issue_key, pr_url):
+                    if VERBOSE and VERBOSE_JIRA_DEDUPE:
+                        _log(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
                     return issue_key
                 if pr_url and issue_key and jira_issue_has_pr_link(issue_key, pr_url):
                     if VERBOSE and VERBOSE_JIRA_DEDUPE:
                         _log(f"[INFO] Jira {issue_key} matched PR URL in links")
                     return issue_key
-                if pr_url and issue_key and FIX_TICKET_PR_LINKS:
+                if pr_url and issue_key and FIX_TICKET_PR_LINKS and can_add_pr_links():
                     if jira_add_pr_remotelink(issue_key, pr_url):
                         if VERBOSE and VERBOSE_JIRA_DEDUPE:
                             _log(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
@@ -316,6 +326,8 @@ def jira_find_existing_issue(summary: str, project: str, pr_url: str) -> Optiona
     return None
 
 def jira_issue_has_pr_link(issue_key: str, pr_url: str) -> bool:
+    if issue_key.startswith("DRY-RUN") and not can_mutate_jira():
+        return False
     pr_slug = _pr_slug(pr_url)
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}/remotelink"
     headers = {"Accept": "application/json", **jira_auth()}
@@ -355,11 +367,10 @@ def jira_issue_has_pr_link(issue_key: str, pr_url: str) -> bool:
 def jira_add_pr_remotelink(issue_key: str, pr_url: str) -> bool:
     if not pr_url:
         return False
+    if not can_add_pr_links():
+        return False
     if jira_issue_has_pr_link(issue_key, pr_url):
         return False
-    if MODE == "dry-run" and not FIX_TICKET_LABELS_EVEN_IN_DRY_MODE:
-        _log(f"[DRY-RUN] Would add PR link to Jira {issue_key}: {pr_url}")
-        return True
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}/remotelink"
     headers = {"Accept": "application/json", **jira_auth()}
     auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
@@ -374,6 +385,8 @@ def jira_add_pr_remotelink(issue_key: str, pr_url: str) -> bool:
     return False
 
 def jira_get_issue(issue_key: str) -> Optional[Dict[str, Any]]:
+    if issue_key.startswith("DRY-RUN") and not can_mutate_jira():
+        return None
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}"
     headers = {"Accept": "application/json", **jira_auth()}
     auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
@@ -387,6 +400,8 @@ def jira_get_issue(issue_key: str) -> Optional[Dict[str, Any]]:
     return None
 
 def jira_is_withdrawn(issue_key: str) -> bool:
+    if issue_key.startswith("DRY-RUN") and not can_mutate_jira():
+        return False
     issue = jira_get_issue(issue_key)
     if not issue:
         return False
@@ -394,11 +409,17 @@ def jira_is_withdrawn(issue_key: str) -> bool:
     return (status.get("name") or "").lower() == "withdrawn"
 
 def jira_get_status_name(issue_key: str) -> str:
+    if issue_key.startswith("DRY-RUN") and not can_mutate_jira():
+        return ""
     issue = jira_get_issue(issue_key)
     if not issue:
         return ""
     status = (issue.get("fields", {}) or {}).get("status", {}) or {}
     return (status.get("name") or "").strip()
+
+def jira_has_skip_status(issue_key: str) -> bool:
+    status = jira_get_status_name(issue_key)
+    return status.lower() in JIRA_SKIP_STATUSES if status else False
 
 def jira_update_issue(issue_key: str, fields: Dict[str, Any]) -> None:
     if MODE == "dry-run" and not FIX_TICKET_LABELS_EVEN_IN_DRY_MODE:
@@ -419,12 +440,13 @@ def jira_update_issue(issue_key: str, fields: Dict[str, Any]) -> None:
 def jira_transition_issue(issue_key: str, status_name: str) -> None:
     if not status_name:
         return
+    if issue_key.startswith("DRY-RUN"):
+        return
     current_status = jira_get_status_name(issue_key)
     if current_status and current_status.lower() == status_name.lower():
         _vlog(f"[INFO] Jira {issue_key} already in status {current_status}")
         return
-    if MODE == "dry-run" and not FIX_TICKET_LABELS_EVEN_IN_DRY_MODE:
-        _log(f"[DRY-RUN] Would transition Jira {issue_key} to status {status_name}")
+    if not can_transition_jira():
         return
     base = JIRA_BASE_URL.rstrip("/")
     headers = {"Accept": "application/json", **jira_auth()}
@@ -457,9 +479,13 @@ def jira_transition_issue(issue_key: str, status_name: str) -> None:
 def jira_transition_issue_path(issue_key: str, statuses: List[str]) -> None:
     if not statuses:
         return
+    if issue_key.startswith("DRY-RUN"):
+        return
     current_status = jira_get_status_name(issue_key)
     if current_status and current_status.lower() == statuses[-1].lower():
         _vlog(f"[INFO] Jira {issue_key} already in status {current_status}")
+        return
+    if not can_transition_jira():
         return
     for status in statuses:
         jira_transition_issue(issue_key, status)
@@ -539,6 +565,9 @@ def process_pr(repo, pr, cfg):
             _vlog(f"[INFO] Jira {existing} is Withdrawn; creating a new ticket")
             existing = None
         if existing:
+            if jira_has_skip_status(existing):
+                _log(f"[SKIP] PR #{pr.number} in {repo.full_name} has Jira ticket {existing} in skip status")
+                return
             if FIX_TICKET_LABELS:
                 labels_to_add = cfg.get("jira", {}).get("labels", [])
                 jira_ensure_ticket_fields(existing, labels_to_add, JIRA_FIX_VERSION)
@@ -548,6 +577,9 @@ def process_pr(repo, pr, cfg):
         project = cfg.get("jira", {}).get("project", DEFAULT_JIRA_PROJECT)
         existing = jira_find_existing_issue(summary, project, pr.html_url)
         if existing:
+            if jira_has_skip_status(existing):
+                _log(f"[SKIP] PR #{pr.number} in {repo.full_name} has Jira ticket {existing} in skip status")
+                return
             if FIX_TICKET_LABELS:
                 labels_to_add = cfg.get("jira", {}).get("labels", [])
                 jira_ensure_ticket_fields(existing, labels_to_add, JIRA_FIX_VERSION)
@@ -560,7 +592,7 @@ def process_pr(repo, pr, cfg):
         labels_to_add = cfg.get("jira", {}).get("labels", [])
         jira_resp = jira_create_issue(summary, description, labels_to_add, project, priority)
         issue_key = jira_resp.get("key", "UNKNOWN")
-        if pr.html_url and CREATE_PR_LINKS:
+        if pr.html_url and CREATE_PR_LINKS and can_add_pr_links():
             jira_add_pr_remotelink(issue_key, pr.html_url)
         if JIRA_TARGET_STATUS_PATH:
             jira_transition_issue_path(issue_key, JIRA_TARGET_STATUS_PATH)

@@ -65,4 +65,5 @@ jobs:
           CREATE_PR_LINKS: "true" # Set to "true" to add PR links on new Jira tickets
           JIRA_TARGET_STATUS: "Resume Development" # Optional: transition tickets to this status
           JIRA_TARGET_STATUS_PATH: "Blocked,Resume Development" # Optional: comma-separated transition path
+          JIRA_SKIP_STATUSES: "Resume Development,Resume QA,Resume Release" # Optional: skip tickets in these statuses
         run: python main.py
