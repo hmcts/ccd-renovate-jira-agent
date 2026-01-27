@@ -60,7 +60,7 @@ jobs:
           FIX_TICKET_LABELS: "false" # Set to "true" to amend labels/epic/fixVersion on existing tickets
           FIX_TICKET_LABELS_EVEN_IN_DRY_MODE: "false" # Set to "true" to update tickets even when MODE=dry-run
           FIX_TICKET_PR_LINKS: "false" # Set to "true" to add PR links to existing Jira tickets
-          VERBOSE_JIRA_DEDUPE: "true" # Set to "true" for extra Jira dedupe diagnostics
+          VERBOSE_JIRA_DEDUPE: "false" # Set to "true" for extra Jira dedupe diagnostics
           LOCAL_CONFIG_PATH: .github/renovate-jira.yml # Use config from this repo for all targets
           CREATE_PR_LINKS: "true" # Set to "true" to add PR links on new Jira tickets
           JIRA_TARGET_STATUS: "Resume Development" # Optional: transition tickets to this status
