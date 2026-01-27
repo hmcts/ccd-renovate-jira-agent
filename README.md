@@ -30,6 +30,7 @@ export VERBOSE_JIRA_DEDUPE=false # Optional: extra diagnostics for Jira dedupe
 export CREATE_PR_LINKS=true # Optional: add PR links on new Jira tickets
 export JIRA_TARGET_STATUS="Resume Development" # Optional: transition tickets to this status
 export JIRA_TARGET_STATUS_PATH="Blocked,Resume Development" # Optional: comma-separated transition path
+export JIRA_SKIP_STATUSES="Resume Development,Resume QA,Resume Release" # Optional: skip tickets in these statuses
 ```
 
 When `MODE=dry-run`, updates are skipped unless `FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=true`.
