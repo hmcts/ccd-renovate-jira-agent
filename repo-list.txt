@@ -14,7 +14,7 @@ hmcts/ccd-test-stubs-service
 hmcts/ccd-next-hearing-date-updater
 hmcts/ccd-api-gateway
 hmcts/ccd-case-activity-api
-hmcts/ccd-case-print-service/master/yarn-audit-known-issues
+hmcts/ccd-case-print-service
 #hmcts/hmc-hmi-inbound-adapter
 #hmcts/hmc-hmi-outbound-adapter
 #hmcts/hmc-cft-hearing-service

@@ -15,8 +15,8 @@ python -m pip install -r requirements.txt
 export MODE=dry-run # or run
 export REPO_LIST_FILE=./repo-list.txt
 export GITHUB_TOKEN=<YOUR-GITHUB-FINE-GRAINED-TOKEN>
+export JIRA_BASE_URL=https://tools.hmcts.net/jira
 
-#export JIRA_BASE_URL=https://tools.hmcts.net/jira
 #export JIRA_USER_EMAIL=<YOUR_JIRA_LOGIN_EMAIL_ADDRESS>
 
 #If using PAT authentication, use JIRA_PAT instead of the above two variables
