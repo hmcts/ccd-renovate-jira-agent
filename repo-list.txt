@@ -7,3 +7,16 @@ hmcts/ccd-definition-store-api
 hmcts/ccd-data-store-api
 hmcts/ccd-user-profile-api
 hmcts/ccd-admin-web
+hmcts/ccd-case-document-am-api
+hmcts/ccd-message-publisher
+hmcts/ccd-test-stubs-service
+hmcts/ccd-test-stubs-service
+hmcts/ccd-next-hearing-date-updater
+hmcts/ccd-api-gateway
+hmcts/ccd-case-activity-api
+hmcts/ccd-case-print-service/master/yarn-audit-known-issues
+#hmcts/hmc-hmi-inbound-adapter
+#hmcts/hmc-hmi-outbound-adapter
+#hmcts/hmc-cft-hearing-service
+#hmcts/cpo-case-payment-orders-api
+#hmcts/aac-manage-case-assignment
