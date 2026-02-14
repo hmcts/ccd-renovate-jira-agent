@@ -49,6 +49,8 @@ DEFAULT_JIRA_PROJECT = os.getenv("JIRA_PROJECT_KEY", "CCD")
 JIRA_FIX_VERSION = os.getenv("JIRA_FIX_VERSION", "CCD CI/CD Release")
 JIRA_EPIC_LINK_FIELD = os.getenv("JIRA_EPIC_LINK_FIELD", "customfield_10008")
 JIRA_EPIC_KEY = os.getenv("JIRA_EPIC_KEY", "CCD-7071")
+JIRA_RELEASE_APPROACH_FIELD = os.getenv("JIRA_RELEASE_APPROACH_FIELD", "")
+JIRA_RELEASE_APPROACH_VALUE = os.getenv("JIRA_RELEASE_APPROACH_VALUE", "Tier 1: CI/CD")
 FIX_TICKET_LABELS = os.getenv("FIX_TICKET_LABELS", "").lower() in {"1", "true", "yes", "on"}
 FIX_TICKET_LABELS_EVEN_IN_DRY_MODE = os.getenv("FIX_TICKET_LABELS_EVEN_IN_DRY_MODE", "").lower() in {"1", "true", "yes", "on"}
 FIX_TICKET_PR_LINKS = os.getenv("FIX_TICKET_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
@@ -57,6 +59,8 @@ CREATE_PR_LINKS = os.getenv("CREATE_PR_LINKS", "").lower() in {"1", "true", "yes
 JIRA_TARGET_STATUS = os.getenv("JIRA_TARGET_STATUS", "")
 JIRA_TARGET_STATUS_PATH = [s.strip() for s in os.getenv("JIRA_TARGET_STATUS_PATH", "").split(",") if s.strip()]
 JIRA_SKIP_STATUSES = {s.strip().lower() for s in os.getenv("JIRA_SKIP_STATUSES", "Resume Development,Resume QA,Resume Release").split(",") if s.strip()}
+TEST_PR_NUMBER = int(os.getenv("TEST_PR_NUMBER", "0") or "0")
+MAX_NEW_JIRA_TICKETS = int(os.getenv("MAX_NEW_JIRA_TICKETS", "0") or "0")
 
 def can_mutate_jira() -> bool:
     return MODE != "dry-run" or FIX_TICKET_LABELS_EVEN_IN_DRY_MODE
@@ -93,6 +97,8 @@ def load_repo_config(repo) -> Dict[str, Any]:
             "project": DEFAULT_JIRA_PROJECT,
             "priority": {"security": "High", "major": "Medium", "critical-dep": "High"},
             "labels": ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"],
+            "release_approach_field": JIRA_RELEASE_APPROACH_FIELD,
+            "release_approach": JIRA_RELEASE_APPROACH_VALUE,
         },
         "github": {"comment": True, "add_labels": True, "require_labels": ["Renovate Dependencies"]},
     }
@@ -162,7 +168,33 @@ def jira_auth() -> Dict[str, str]:
         return {"Authorization": f"Bearer {JIRA_PAT}"}
     return {}
 
-def jira_create_issue(summary: str, description: str, labels: List[str], project: str, priority: str) -> Dict[str, Any]:
+def _jira_single_select_value(raw_value: Any) -> Optional[Dict[str, Any]]:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, dict):
+        return raw_value
+    if isinstance(raw_value, str):
+        value = raw_value.strip()
+        return {"value": value} if value else None
+    raise ValueError(f"Unsupported Jira select field value type: {type(raw_value).__name__}")
+
+def _jira_single_select_matches(current_value: Any, desired_value: Dict[str, Any]) -> bool:
+    if not isinstance(current_value, dict):
+        return False
+    for key, value in desired_value.items():
+        if current_value.get(key) != value:
+            return False
+    return True
+
+def jira_create_issue(
+    summary: str,
+    description: str,
+    labels: List[str],
+    project: str,
+    priority: str,
+    release_approach_field: str = "",
+    release_approach_value: Any = None,
+) -> Dict[str, Any]:
     payload = {
         "fields": {
             "project": {"key": project},
@@ -175,6 +207,9 @@ def jira_create_issue(summary: str, description: str, labels: List[str], project
             JIRA_EPIC_LINK_FIELD: JIRA_EPIC_KEY,
         }
     }
+    release_approach = _jira_single_select_value(release_approach_value)
+    if release_approach_field and release_approach:
+        payload["fields"][release_approach_field] = release_approach
     if MODE == "dry-run":
         _log("[DRY-RUN] Would create Jira issue in project {}: {}".format(project, summary))
         return {"key": "DRY-RUN-1"}
@@ -390,7 +425,10 @@ def jira_get_issue(issue_key: str) -> Optional[Dict[str, Any]]:
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}"
     headers = {"Accept": "application/json", **jira_auth()}
     auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
-    params = {"fields": f"labels,fixVersions,status,{JIRA_EPIC_LINK_FIELD},issuelinks"}
+    fields_to_read = ["labels", "fixVersions", "status", JIRA_EPIC_LINK_FIELD, "issuelinks"]
+    if JIRA_RELEASE_APPROACH_FIELD:
+        fields_to_read.append(JIRA_RELEASE_APPROACH_FIELD)
+    params = {"fields": ",".join(fields_to_read)}
     try:
         resp = requests.get(url, headers=headers, params=params, auth=auth)
         resp.raise_for_status()
@@ -490,11 +528,17 @@ def jira_transition_issue_path(issue_key: str, statuses: List[str]) -> None:
     for status in statuses:
         jira_transition_issue(issue_key, status)
 
-def jira_ensure_ticket_fields(issue_key: str, desired_labels: List[str], fix_version: str) -> None:
+def jira_ensure_ticket_fields(
+    issue_key: str,
+    desired_labels: List[str],
+    fix_version: str,
+    release_approach_field: str = "",
+    release_approach_value: Any = None,
+) -> None:
     issue = jira_get_issue(issue_key)
     if not issue:
         return
-    _vlog(f"[INFO] Found Jira {issue_key}; checking labels/epic/fixVersion")
+    _vlog(f"[INFO] Found Jira {issue_key}; checking labels/epic/fixVersion/release approach")
     fields = issue.get("fields", {}) or {}
     updates: Dict[str, Any] = {}
 
@@ -511,11 +555,17 @@ def jira_ensure_ticket_fields(issue_key: str, desired_labels: List[str], fix_ver
     if JIRA_EPIC_KEY and current_epic != JIRA_EPIC_KEY:
         updates[JIRA_EPIC_LINK_FIELD] = JIRA_EPIC_KEY
 
+    desired_release_approach = _jira_single_select_value(release_approach_value)
+    if release_approach_field and desired_release_approach:
+        current_release_approach = fields.get(release_approach_field)
+        if not _jira_single_select_matches(current_release_approach, desired_release_approach):
+            updates[release_approach_field] = desired_release_approach
+
     if updates:
         _vlog(f"[INFO] Updating Jira {issue_key} fields: {sorted(updates.keys())}")
         jira_update_issue(issue_key, updates)
     else:
-        _vlog(f"[INFO] Jira {issue_key} already has desired labels/epic/fixVersion")
+        _vlog(f"[INFO] Jira {issue_key} already has desired labels/epic/fixVersion/release approach")
     if JIRA_TARGET_STATUS_PATH:
         jira_transition_issue_path(issue_key, JIRA_TARGET_STATUS_PATH)
     elif JIRA_TARGET_STATUS:
@@ -534,7 +584,7 @@ def pr_has_ticket_in_comments(pr) -> Optional[str]:
         pass
     return None
 
-def process_pr(repo, pr, cfg):
+def process_pr(repo, pr, cfg) -> bool:
     global LOG_PREFIX
     print(f"Processing PR #{pr.number} ({pr.title or ''})")
     previous_prefix = LOG_PREFIX
@@ -542,10 +592,10 @@ def process_pr(repo, pr, cfg):
     try:
         if not cfg.get("enabled", True):
             _vlog(f"[SKIP] Repo disabled for PR #{getattr(pr,'number','?')} in {repo.full_name}")
-            return
+            return False
         if pr.state != "open":
             _vlog(f"[SKIP] PR #{pr.number} in {repo.full_name} is not open")
-            return
+            return False
         require_labels = set(l.lower() for l in cfg.get("github", {}).get("require_labels", []))
         if not require_labels:
             # Backward compatibility for older configs.
@@ -553,13 +603,13 @@ def process_pr(repo, pr, cfg):
         pr_labels = set(l.name.lower() for l in pr.get_labels())
         if require_labels and not (pr_labels & require_labels):
             _vlog(f"[SKIP] PR #{pr.number} in {repo.full_name} missing required labels: {sorted(require_labels)}")
-            return
+            return False
         category, reason = needs_jira(pr.title or "", pr.body or "", [l.name for l in pr.get_labels()],
                                      critical_deps=cfg.get("critical_dependencies", []),
                                      create_jira_for=cfg.get("create_jira_for", {}))
         if not category:
             _vlog(f"[SKIP] PR #{pr.number} in {repo.full_name} did not match any rule")
-            return
+            return False
         existing = pr_has_ticket_in_comments(pr)
         if existing and jira_is_withdrawn(existing):
             _vlog(f"[INFO] Jira {existing} is Withdrawn; creating a new ticket")
@@ -567,30 +617,53 @@ def process_pr(repo, pr, cfg):
         if existing:
             if jira_has_skip_status(existing):
                 _log(f"[SKIP] PR #{pr.number} in {repo.full_name} has Jira ticket {existing} in skip status")
-                return
+                return False
             if FIX_TICKET_LABELS:
+                jira_cfg = cfg.get("jira", {})
                 labels_to_add = cfg.get("jira", {}).get("labels", [])
-                jira_ensure_ticket_fields(existing, labels_to_add, JIRA_FIX_VERSION)
+                jira_ensure_ticket_fields(
+                    existing,
+                    labels_to_add,
+                    JIRA_FIX_VERSION,
+                    jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
+                    jira_cfg.get("release_approach"),
+                )
             _log(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing}")
-            return
+            return False
         summary = f"Dependency update: {pr.title}"
         project = cfg.get("jira", {}).get("project", DEFAULT_JIRA_PROJECT)
         existing = jira_find_existing_issue(summary, project, pr.html_url)
         if existing:
             if jira_has_skip_status(existing):
                 _log(f"[SKIP] PR #{pr.number} in {repo.full_name} has Jira ticket {existing} in skip status")
-                return
+                return False
             if FIX_TICKET_LABELS:
+                jira_cfg = cfg.get("jira", {})
                 labels_to_add = cfg.get("jira", {}).get("labels", [])
-                jira_ensure_ticket_fields(existing, labels_to_add, JIRA_FIX_VERSION)
+                jira_ensure_ticket_fields(
+                    existing,
+                    labels_to_add,
+                    JIRA_FIX_VERSION,
+                    jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
+                    jira_cfg.get("release_approach"),
+                )
             _log(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing} (summary+PR link)")
-            return
+            return False
         jira_preflight(project)
         priority_map = cfg.get("jira", {}).get("priority", {})
         priority = priority_map.get(category, "Medium")
         description = f"Renovate PR: {pr.html_url}\n\nReason detected: {reason}\n\nPR excerpt:\n{(pr.body or '')[:1000]}"
         labels_to_add = cfg.get("jira", {}).get("labels", [])
-        jira_resp = jira_create_issue(summary, description, labels_to_add, project, priority)
+        jira_cfg = cfg.get("jira", {})
+        jira_resp = jira_create_issue(
+            summary,
+            description,
+            labels_to_add,
+            project,
+            priority,
+            jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
+            jira_cfg.get("release_approach"),
+        )
         issue_key = jira_resp.get("key", "UNKNOWN")
         if pr.html_url and CREATE_PR_LINKS and can_add_pr_links():
             jira_add_pr_remotelink(issue_key, pr.html_url)
@@ -611,18 +684,27 @@ def process_pr(repo, pr, cfg):
                 except Exception as e:
                     _elog(f"Warning: failed to add labels on PR #{pr.number} in {repo.full_name}: {e}")
         _log(f"Created Jira {issue_key} for PR #{pr.number} in {repo.full_name}")
+        return True
     finally:
         LOG_PREFIX = previous_prefix
 
 def main():
     repos = get_target_repos(gh)
     print(f"Scanning {len(repos)} repos")
+    created_count = 0
     for repo in repos:
         cfg = load_repo_config(repo)
         print(f"Repo {repo.full_name} config enabled={cfg.get('enabled', True)}")
         for pr in repo.get_pulls(state="open", sort="updated"):
+            if TEST_PR_NUMBER and pr.number != TEST_PR_NUMBER:
+                continue
             try:
-                process_pr(repo, pr, cfg)
+                created = process_pr(repo, pr, cfg)
+                if created:
+                    created_count += 1
+                    if MAX_NEW_JIRA_TICKETS > 0 and created_count >= MAX_NEW_JIRA_TICKETS:
+                        _log(f"[STOP] Reached MAX_NEW_JIRA_TICKETS={MAX_NEW_JIRA_TICKETS}; ending run")
+                        return
                 time.sleep(0.5)
             except Exception as e:
                 print(f"Error processing PR #{getattr(pr,'number','?')} in {repo.full_name}: {e}", file=sys.stderr)
