@@ -19,6 +19,8 @@ github:
 jira:
   project: "CCD"
   labels: ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"]
+  release_approach_field: "customfield_33400"
+  release_approach: "Tier 1: CI/CD"
   priority:
     security: "2-High"
     major: "3-Medium"

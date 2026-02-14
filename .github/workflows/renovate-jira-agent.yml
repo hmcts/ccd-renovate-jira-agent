@@ -55,10 +55,12 @@ jobs:
           JIRA_PROJECT_KEY: ${{ env.JIRA_PROJECT_KEY }}
           JIRA_API_VERSION: "2"
 
-          MODE: "run" # Set to "run" to create Jira tickets, "dry-run" for testing only
+          MODE: "dry-run" # Set to "run" to create Jira tickets, "dry-run" for testing only
           VERBOSE: "1" # If MODE=run, set to "0" to reduce log verbosity
-          FIX_TICKET_LABELS: "false" # Set to "true" to amend labels/epic/fixVersion on existing tickets
-          FIX_TICKET_LABELS_EVEN_IN_DRY_MODE: "false" # Set to "true" to update tickets even when MODE=dry-run
+          TEST_PR_NUMBER: "https://github.com/hmcts/ccd-case-print-service/pull/600" # Optional: process only this PR number
+          MAX_NEW_JIRA_TICKETS: "1" # Optional: stop after creating this many new Jira tickets, good for testing
+          FIX_TICKET_LABELS: "true" # Set to "true" to amend labels/epic/fixVersion/release approach on existing tickets
+          FIX_TICKET_LABELS_EVEN_IN_DRY_MODE: "true" # Set to "true" to update tickets even when MODE=dry-run
           FIX_TICKET_PR_LINKS: "false" # Set to "true" to add PR links to existing Jira tickets
           VERBOSE_JIRA_DEDUPE: "false" # Set to "true" for extra Jira dedupe diagnostics
           LOCAL_CONFIG_PATH: .github/renovate-jira.yml # Use config from this repo for all targets
