@@ -59,7 +59,19 @@ CREATE_PR_LINKS = os.getenv("CREATE_PR_LINKS", "").lower() in {"1", "true", "yes
 JIRA_TARGET_STATUS = os.getenv("JIRA_TARGET_STATUS", "")
 JIRA_TARGET_STATUS_PATH = [s.strip() for s in os.getenv("JIRA_TARGET_STATUS_PATH", "").split(",") if s.strip()]
 JIRA_SKIP_STATUSES = {s.strip().lower() for s in os.getenv("JIRA_SKIP_STATUSES", "Resume Development,Resume QA,Resume Release").split(",") if s.strip()}
-TEST_PR_NUMBER = int(os.getenv("TEST_PR_NUMBER", "0") or "0")
+
+def _parse_optional_pr_number(raw: str) -> int:
+    value = (raw or "").strip()
+    if not value:
+        return 0
+    if value.isdigit():
+        return int(value)
+    match = re.search(r"/pull/(\d+)", value)
+    if match:
+        return int(match.group(1))
+    raise ValueError(f"Invalid TEST_PR_NUMBER value: {value!r}. Use PR number (e.g. 600) or PR URL.")
+
+TEST_PR_NUMBER = _parse_optional_pr_number(os.getenv("TEST_PR_NUMBER", "0"))
 MAX_NEW_JIRA_TICKETS = int(os.getenv("MAX_NEW_JIRA_TICKETS", "0") or "0")
 
 def can_mutate_jira() -> bool:
