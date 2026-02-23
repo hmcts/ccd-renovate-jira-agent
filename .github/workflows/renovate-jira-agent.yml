@@ -63,21 +63,27 @@ jobs:
           JIRA_RELEASE_APPROACH_VALUE: ${{ env.JIRA_RELEASE_APPROACH_VALUE }}
           JIRA_API_VERSION: "2"
 
-          MODE: "dry-run" # Set to "run" to create Jira tickets, "dry-run" for testing only
-          VERBOSE: "1" # If MODE=run, set to "0" to reduce log verbosity
+          MODE: "run" # Set to "run" to create Jira tickets, "dry-run" for testing only
+          VERBOSE: "0" # If MODE=run, set to "0" to reduce log verbosity. If MODE=dry-run, set to "1" to reduce log verbosity
 
           # if testing only, grab only one renovate PR to process, create only one Jira ticket to confirm logic is correct
           # TEST_PR_NUMBER: "https://github.com/hmcts/ccd-case-print-service/pull/600" # Optional: process only this PR number
           # MAX_NEW_JIRA_TICKETS: "1" # Optional: stop after creating this many new Jira tickets, good for testing
           
           FIX_TICKET_LABELS: "true" # Set to "true" to amend labels/epic/fixVersion/release approach on existing tickets
-          FIX_TICKET_LABELS_EVEN_IN_DRY_MODE: "true" # Set to "true" to update tickets even when MODE=dry-run
           FIX_TICKET_PR_LINKS: "false" # Set to "true" to add PR links to existing Jira tickets
+
+          FIX_TICKET_LABELS_EVEN_IN_DRY_MODE: "true" # Set to "true" to update tickets even when MODE=dry-run
           
           VERBOSE_JIRA_DEDUPE: "false" # Set to "true" for extra Jira dedupe diagnostics (will log all Jira tickets considered for deduplication and why they were or were not considered a match)
+          
           LOCAL_CONFIG_PATH: .github/renovate-jira.yml # Use config from this repo for all targets
           CREATE_PR_LINKS: "true" # Set to "true" to add PR links on new Jira tickets
+          
+          #Jira ticket created will initially have status of Draft. To set to 'To Do' we need to transition the ticket. If your workflow requires transitioning tickets, set the target status and optionally the transition path and any statuses to skip (e.g. if you have a "Blocked" status that should not be transitioned out of until the block is resolved, include that in the target path but not in the skip list)
           JIRA_TARGET_STATUS: "Resume Development" # Optional: transition tickets to this status
           JIRA_TARGET_STATUS_PATH: "Blocked,Resume Development" # Optional: comma-separated transition path
+          
+          #Existing Jira tickets that match should be ignored if they have status as below (i.e. not be processed at all)
           JIRA_SKIP_STATUSES: "Resume Development,Resume QA,Resume Release" # Optional: skip tickets in these statuses
         run: python main.py
