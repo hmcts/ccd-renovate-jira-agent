@@ -1,4 +1,4 @@
-# Demo Summary: Renovate -> Jira Agent
+# Project Summary: Renovate -> Jira Agent
 
 This agent automatically turns important Renovate dependency PRs into Jira work items so dependency risk is tracked and visible without manual triage.
 
