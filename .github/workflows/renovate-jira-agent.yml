@@ -64,7 +64,7 @@ jobs:
           JIRA_API_VERSION: "2"
 
           MODE: "run" # Set to "run" to create Jira tickets, "dry-run" for testing only
-          VERBOSE: "0" # If MODE=run, set to "0" to reduce log verbosity. If MODE=dry-run, set to "1" to reduce log verbosity
+          VERBOSE: "1" # If MODE=run, set to "0" to reduce log verbosity. If MODE=dry-run, set to "1" for log verbosity
 
           # if testing only, grab only one renovate PR to process, create only one Jira ticket to confirm logic is correct
           # TEST_PR_NUMBER: "https://github.com/hmcts/ccd-case-print-service/pull/600" # Optional: process only this PR number
