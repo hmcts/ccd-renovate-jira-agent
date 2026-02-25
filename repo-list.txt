@@ -4,7 +4,7 @@
 # org-b/team-repo
 
 #hmcts/ccd-definition-store-api
-#hmcts/ccd-data-store-api
+hmcts/ccd-data-store-api
 #hmcts/ccd-user-profile-api
 #hmcts/ccd-admin-web
 #hmcts/ccd-case-document-am-api
@@ -14,7 +14,7 @@
 #hmcts/ccd-next-hearing-date-updater
 #hmcts/ccd-api-gateway
 #hmcts/ccd-case-activity-api
-hmcts/ccd-case-print-service
+#hmcts/ccd-case-print-service
 #hmcts/hmc-hmi-inbound-adapter
 #hmcts/hmc-hmi-outbound-adapter
 #hmcts/hmc-cft-hearing-service
