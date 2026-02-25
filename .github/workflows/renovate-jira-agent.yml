@@ -68,8 +68,8 @@ jobs:
           VERBOSE: "1" # If MODE=run, set to "0" to reduce log verbosity. If MODE=dry-run, set to "1" for log verbosity
 
           # if testing only, grab only one renovate PR to process, create only one Jira ticket to confirm logic is correct
-          # TEST_PR_NUMBER: "https://github.com/hmcts/ccd-case-print-service/pull/600" # Optional: process only this PR number
-          # MAX_NEW_JIRA_TICKETS: "1" # Optional: stop after creating this many new Jira tickets, good for testing
+          TEST_PR_NUMBER: "https://github.com/hmcts/ccd-data-store-api/pull/2801" # Optional: process only this PR number
+          MAX_NEW_JIRA_TICKETS: "1" # Optional: stop after creating this many new Jira tickets, good for testing
           
           FIX_TICKET_LABELS: "true" # Set to "true" to amend labels/epic/fixVersion/release approach on existing tickets
           FIX_TICKET_PR_LINKS: "false" # Set to "true" to add PR links to existing Jira tickets
@@ -81,6 +81,7 @@ jobs:
           LOCAL_CONFIG_PATH: .github/renovate-jira.yml # Use config from this repo for all targets
           CREATE_PR_LINKS: "true" # Set to "true" to add PR links on new Jira tickets
           UPDATE_PR_TITLE_WITH_JIRA: "true" # Set to "true" to prefix PR title with Jira key when a new ticket is created
+          UPDATE_PR_TITLE_WITH_EXISTING_JIRA: "true" # Set to "true" to prefix PR title when an existing Jira ticket is matched and title is missing key
           
           #Jira ticket created will initially have status of Draft. To set to 'To Do' we need to transition the ticket. If your workflow requires transitioning tickets, set the target status and optionally the transition path and any statuses to skip (e.g. if you have a "Blocked" status that should not be transitioned out of until the block is resolved, include that in the target path but not in the skip list)
           JIRA_TARGET_STATUS: "Resume Development" # Optional: transition tickets to this status

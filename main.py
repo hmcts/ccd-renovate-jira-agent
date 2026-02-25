@@ -57,6 +57,7 @@ FIX_TICKET_PR_LINKS = os.getenv("FIX_TICKET_PR_LINKS", "").lower() in {"1", "tru
 VERBOSE_JIRA_DEDUPE = os.getenv("VERBOSE_JIRA_DEDUPE", "").lower() in {"1", "true", "yes", "on"}
 CREATE_PR_LINKS = os.getenv("CREATE_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
 UPDATE_PR_TITLE_WITH_JIRA = os.getenv("UPDATE_PR_TITLE_WITH_JIRA", "true").lower() in {"1", "true", "yes", "on"}
+UPDATE_PR_TITLE_WITH_EXISTING_JIRA = os.getenv("UPDATE_PR_TITLE_WITH_EXISTING_JIRA", "false").lower() in {"1", "true", "yes", "on"}
 JIRA_TARGET_STATUS = os.getenv("JIRA_TARGET_STATUS", "")
 JIRA_TARGET_STATUS_PATH = [s.strip() for s in os.getenv("JIRA_TARGET_STATUS_PATH", "").split(",") if s.strip()]
 JIRA_SKIP_STATUSES = {s.strip().lower() for s in os.getenv("JIRA_SKIP_STATUSES", "Resume Development,Resume QA,Resume Release").split(",") if s.strip()}
@@ -689,6 +690,8 @@ def process_pr(repo, pr, cfg) -> bool:
                     jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                     jira_cfg.get("release_approach"),
                 )
+            if UPDATE_PR_TITLE_WITH_EXISTING_JIRA:
+                maybe_update_pr_title_with_jira(pr, existing, repo.full_name)
             _log(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing}")
             return False
         summary = f"Dependency update: {pr.title}"
@@ -708,6 +711,8 @@ def process_pr(repo, pr, cfg) -> bool:
                     jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                     jira_cfg.get("release_approach"),
                 )
+            if UPDATE_PR_TITLE_WITH_EXISTING_JIRA:
+                maybe_update_pr_title_with_jira(pr, existing, repo.full_name)
             _log(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing} (summary+PR link)")
             return False
         jira_preflight(project)
