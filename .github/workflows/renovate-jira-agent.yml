@@ -84,7 +84,7 @@ jobs:
           #below are set to false currently as the fine grained token does not allow editing the pr title
           UPDATE_PR_TITLE_WITH_JIRA: "false" # Set to "true" to prefix PR title with Jira key when a new ticket is created
           UPDATE_PR_TITLE_WITH_EXISTING_JIRA: "false" # Set to "true" to prefix PR title when an existing Jira ticket is matched and title is missing key
-          COMMENT_ON_EXISTING_JIRA_IF_MISSING: "true" # Set to "true" to add a PR comment when existing matched Jira key is not already in PR comments
+          UPDATE_PR_COMMENT_ON_EXISTING_JIRA_IF_MISSING: "false" # Set to "true" to add a PR comment when existing matched Jira key is not already in PR comments
           
           #Jira ticket created will initially have status of Draft. To set to 'To Do' we need to transition the ticket. If your workflow requires transitioning tickets, set the target status and optionally the transition path and any statuses to skip (e.g. if you have a "Blocked" status that should not be transitioned out of until the block is resolved, include that in the target path but not in the skip list)
           JIRA_TARGET_STATUS: "Resume Development" # Optional: transition tickets to this status
