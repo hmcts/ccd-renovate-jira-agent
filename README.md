@@ -30,6 +30,7 @@ export FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=false # Optional: allow updates even w
 export FIX_TICKET_PR_LINKS=false # Optional: add PR links to existing Jira tickets when summary matches
 export VERBOSE_JIRA_DEDUPE=false # Optional: extra diagnostics for Jira dedupe
 export CREATE_PR_LINKS=true # Optional: add PR links on new Jira tickets
+export UPDATE_PR_TITLE_WITH_JIRA=true # Optional: prefix PR title with Jira key when a new ticket is created (e.g. CCD-123 :: <original title>)
 export JIRA_TARGET_STATUS="Resume Development" # Optional: transition tickets to this status
 export JIRA_TARGET_STATUS_PATH="Blocked,Resume Development" # Optional: comma-separated transition path
 export JIRA_SKIP_STATUSES="Resume Development,Resume QA,Resume Release" # Optional: skip tickets in these statuses

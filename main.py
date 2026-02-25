@@ -56,6 +56,7 @@ FIX_TICKET_LABELS_EVEN_IN_DRY_MODE = os.getenv("FIX_TICKET_LABELS_EVEN_IN_DRY_MO
 FIX_TICKET_PR_LINKS = os.getenv("FIX_TICKET_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
 VERBOSE_JIRA_DEDUPE = os.getenv("VERBOSE_JIRA_DEDUPE", "").lower() in {"1", "true", "yes", "on"}
 CREATE_PR_LINKS = os.getenv("CREATE_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
+UPDATE_PR_TITLE_WITH_JIRA = os.getenv("UPDATE_PR_TITLE_WITH_JIRA", "true").lower() in {"1", "true", "yes", "on"}
 JIRA_TARGET_STATUS = os.getenv("JIRA_TARGET_STATUS", "")
 JIRA_TARGET_STATUS_PATH = [s.strip() for s in os.getenv("JIRA_TARGET_STATUS_PATH", "").split(",") if s.strip()]
 JIRA_SKIP_STATUSES = {s.strip().lower() for s in os.getenv("JIRA_SKIP_STATUSES", "Resume Development,Resume QA,Resume Release").split(",") if s.strip()}
@@ -596,6 +597,43 @@ def pr_has_ticket_in_comments(pr) -> Optional[str]:
         pass
     return None
 
+def _prefixed_pr_title(current_title: str, issue_key: str) -> str:
+    title = (current_title or "").strip()
+    key = (issue_key or "").strip().upper()
+    if not title or not key:
+        return title
+
+    match = re.match(r"^\s*([A-Z][A-Z0-9]+-\d+)\s*::\s*(.*)$", title, re.IGNORECASE)
+    if match:
+        existing_key = (match.group(1) or "").upper()
+        remainder = (match.group(2) or "").strip()
+        if existing_key == key:
+            return title
+        if remainder:
+            return f"{key} :: {remainder}"
+        return key
+    return f"{key} :: {title}"
+
+def maybe_update_pr_title_with_jira(pr, issue_key: str, repo_full_name: str) -> None:
+    if not UPDATE_PR_TITLE_WITH_JIRA:
+        return
+    if not issue_key or issue_key == "UNKNOWN":
+        return
+
+    current = pr.title or ""
+    desired = _prefixed_pr_title(current, issue_key)
+    if desired == current:
+        _vlog(f"[INFO] PR #{pr.number} in {repo_full_name} title already contains Jira key {issue_key}")
+        return
+    if MODE == "dry-run":
+        _log(f"[DRY-RUN] Would update PR #{pr.number} title to: {desired}")
+        return
+    try:
+        pr.edit(title=desired)
+        _log(f"[INFO] Updated PR #{pr.number} title with Jira key {issue_key}")
+    except Exception as e:
+        _elog(f"Warning: failed to update title on PR #{pr.number} in {repo_full_name}: {e}")
+
 def process_pr(repo, pr, cfg) -> bool:
     global LOG_PREFIX
     print(f"Processing PR #{pr.number} ({pr.title or ''})")
@@ -679,6 +717,7 @@ def process_pr(repo, pr, cfg) -> bool:
         issue_key = jira_resp.get("key", "UNKNOWN")
         if pr.html_url and CREATE_PR_LINKS and can_add_pr_links():
             jira_add_pr_remotelink(issue_key, pr.html_url)
+        maybe_update_pr_title_with_jira(pr, issue_key, repo.full_name)
         if JIRA_TARGET_STATUS_PATH:
             jira_transition_issue_path(issue_key, JIRA_TARGET_STATUS_PATH)
         elif JIRA_TARGET_STATUS:
