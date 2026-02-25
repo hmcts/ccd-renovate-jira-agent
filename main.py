@@ -579,10 +579,6 @@ def jira_ensure_ticket_fields(
         jira_update_issue(issue_key, updates)
     else:
         _vlog(f"[INFO] Jira {issue_key} already has desired labels/epic/fixVersion/release approach")
-    if JIRA_TARGET_STATUS_PATH:
-        jira_transition_issue_path(issue_key, JIRA_TARGET_STATUS_PATH)
-    elif JIRA_TARGET_STATUS:
-        jira_transition_issue(issue_key, JIRA_TARGET_STATUS)
 
 def pr_has_ticket_in_comments(pr) -> Optional[str]:
     import re
@@ -616,8 +612,10 @@ def _prefixed_pr_title(current_title: str, issue_key: str) -> str:
 
 def maybe_update_pr_title_with_jira(pr, issue_key: str, repo_full_name: str) -> None:
     if not UPDATE_PR_TITLE_WITH_JIRA:
+        _vlog(f"[INFO] PR title update disabled for PR #{pr.number} in {repo_full_name}")
         return
     if not issue_key or issue_key == "UNKNOWN":
+        _vlog(f"[INFO] Skipping PR title update for PR #{pr.number} in {repo_full_name}: invalid Jira key")
         return
 
     current = pr.title or ""
@@ -628,11 +626,24 @@ def maybe_update_pr_title_with_jira(pr, issue_key: str, repo_full_name: str) -> 
     if MODE == "dry-run":
         _log(f"[DRY-RUN] Would update PR #{pr.number} title to: {desired}")
         return
+    _vlog(f"[INFO] Updating PR #{pr.number} title from '{current}' to '{desired}'")
+
+    primary_error = None
     try:
         pr.edit(title=desired)
         _log(f"[INFO] Updated PR #{pr.number} title with Jira key {issue_key}")
+        return
     except Exception as e:
-        _elog(f"Warning: failed to update title on PR #{pr.number} in {repo_full_name}: {e}")
+        primary_error = e
+        _vlog(f"[WARN] PR edit API failed for PR #{pr.number} in {repo_full_name}: {e}")
+
+    # Fallback via issue API (PRs are also issues).
+    try:
+        pr.as_issue().edit(title=desired)
+        _log(f"[INFO] Updated PR #{pr.number} title with Jira key {issue_key} (issue API fallback)")
+    except Exception as e:
+        _log(f"[WARN] Failed to update title on PR #{pr.number} in {repo_full_name}: {e}")
+        _elog(f"Warning: failed to update title on PR #{pr.number} in {repo_full_name}: primary={primary_error}; fallback={e}")
 
 def process_pr(repo, pr, cfg) -> bool:
     global LOG_PREFIX
