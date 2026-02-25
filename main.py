@@ -434,7 +434,7 @@ def jira_add_pr_remotelink(issue_key: str, pr_url: str) -> bool:
         _vlog(f"[WARN] Jira remotelink add failed for {issue_key}: {e}")
     return False
 
-def jira_get_issue(issue_key: str) -> Optional[Dict[str, Any]]:
+def jira_get_issue(issue_key: str, extra_fields: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
     if issue_key.startswith("DRY-RUN") and not can_mutate_jira():
         return None
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}"
@@ -443,6 +443,9 @@ def jira_get_issue(issue_key: str) -> Optional[Dict[str, Any]]:
     fields_to_read = ["labels", "fixVersions", "status", JIRA_EPIC_LINK_FIELD, "issuelinks"]
     if JIRA_RELEASE_APPROACH_FIELD:
         fields_to_read.append(JIRA_RELEASE_APPROACH_FIELD)
+    for field_name in extra_fields or []:
+        if field_name and field_name not in fields_to_read:
+            fields_to_read.append(field_name)
     params = {"fields": ",".join(fields_to_read)}
     try:
         resp = requests.get(url, headers=headers, params=params, auth=auth)
@@ -550,7 +553,7 @@ def jira_ensure_ticket_fields(
     release_approach_field: str = "",
     release_approach_value: Any = None,
 ) -> None:
-    issue = jira_get_issue(issue_key)
+    issue = jira_get_issue(issue_key, extra_fields=[release_approach_field] if release_approach_field else None)
     if not issue:
         return
     _vlog(f"[INFO] Found Jira {issue_key}; checking labels/epic/fixVersion/release approach")

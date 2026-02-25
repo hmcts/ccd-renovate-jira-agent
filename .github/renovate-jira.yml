@@ -12,7 +12,7 @@ critical_dependencies:
   - openssl
 
 github:
-  comment: false
+  comment: true
   add_labels: false
   require_labels: ["Renovate Dependencies"]
 
