@@ -58,6 +58,7 @@ VERBOSE_JIRA_DEDUPE = os.getenv("VERBOSE_JIRA_DEDUPE", "").lower() in {"1", "tru
 CREATE_PR_LINKS = os.getenv("CREATE_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
 UPDATE_PR_TITLE_WITH_JIRA = os.getenv("UPDATE_PR_TITLE_WITH_JIRA", "true").lower() in {"1", "true", "yes", "on"}
 UPDATE_PR_TITLE_WITH_EXISTING_JIRA = os.getenv("UPDATE_PR_TITLE_WITH_EXISTING_JIRA", "false").lower() in {"1", "true", "yes", "on"}
+COMMENT_ON_EXISTING_JIRA_IF_MISSING = os.getenv("COMMENT_ON_EXISTING_JIRA_IF_MISSING", "false").lower() in {"1", "true", "yes", "on"}
 JIRA_TARGET_STATUS = os.getenv("JIRA_TARGET_STATUS", "")
 JIRA_TARGET_STATUS_PATH = [s.strip() for s in os.getenv("JIRA_TARGET_STATUS_PATH", "").split(",") if s.strip()]
 JIRA_SKIP_STATUSES = {s.strip().lower() for s in os.getenv("JIRA_SKIP_STATUSES", "Resume Development,Resume QA,Resume Release").split(",") if s.strip()}
@@ -594,6 +595,38 @@ def pr_has_ticket_in_comments(pr) -> Optional[str]:
         pass
     return None
 
+def pr_comment_has_ticket(pr, issue_key: str) -> bool:
+    key = (issue_key or "").strip().upper()
+    if not key:
+        return False
+    pattern = re.compile(rf"\b{re.escape(key)}\b", re.IGNORECASE)
+    try:
+        comments = pr.get_issue_comments()
+        for c in comments:
+            if pattern.search(c.body or ""):
+                return True
+    except Exception:
+        return False
+    return False
+
+def maybe_comment_existing_jira_if_missing(pr, issue_key: str, reason: str, repo_full_name: str) -> None:
+    if not COMMENT_ON_EXISTING_JIRA_IF_MISSING:
+        return
+    if not issue_key or issue_key == "UNKNOWN":
+        return
+    if pr_comment_has_ticket(pr, issue_key):
+        _vlog(f"[INFO] PR #{pr.number} in {repo_full_name} already has Jira comment for {issue_key}")
+        return
+    comment = f"Existing Jira issue {issue_key} already tracks this Renovate PR. Reason: {reason}"
+    if MODE == "dry-run":
+        _log(f"[DRY-RUN] Would comment on PR #{pr.number} in {repo_full_name}: {comment}")
+        return
+    try:
+        pr.create_issue_comment(comment)
+        _log(f"[INFO] Added PR comment linking existing Jira {issue_key} for PR #{pr.number} in {repo_full_name}")
+    except Exception as e:
+        _elog(f"Warning: failed to comment existing Jira on PR #{pr.number} in {repo_full_name}: {e}")
+
 def _prefixed_pr_title(current_title: str, issue_key: str) -> str:
     title = (current_title or "").strip()
     key = (issue_key or "").strip().upper()
@@ -692,6 +725,8 @@ def process_pr(repo, pr, cfg) -> bool:
                 )
             if UPDATE_PR_TITLE_WITH_EXISTING_JIRA:
                 maybe_update_pr_title_with_jira(pr, existing, repo.full_name)
+            if cfg.get("github", {}).get("comment", True):
+                maybe_comment_existing_jira_if_missing(pr, existing, reason, repo.full_name)
             _log(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing}")
             return False
         summary = f"Dependency update: {pr.title}"
@@ -713,6 +748,8 @@ def process_pr(repo, pr, cfg) -> bool:
                 )
             if UPDATE_PR_TITLE_WITH_EXISTING_JIRA:
                 maybe_update_pr_title_with_jira(pr, existing, repo.full_name)
+            if cfg.get("github", {}).get("comment", True):
+                maybe_comment_existing_jira_if_missing(pr, existing, reason, repo.full_name)
             _log(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing} (summary+PR link)")
             return False
         jira_preflight(project)
