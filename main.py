@@ -58,7 +58,10 @@ VERBOSE_JIRA_DEDUPE = os.getenv("VERBOSE_JIRA_DEDUPE", "").lower() in {"1", "tru
 CREATE_PR_LINKS = os.getenv("CREATE_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
 UPDATE_PR_TITLE_WITH_JIRA = os.getenv("UPDATE_PR_TITLE_WITH_JIRA", "true").lower() in {"1", "true", "yes", "on"}
 UPDATE_PR_TITLE_WITH_EXISTING_JIRA = os.getenv("UPDATE_PR_TITLE_WITH_EXISTING_JIRA", "false").lower() in {"1", "true", "yes", "on"}
-COMMENT_ON_EXISTING_JIRA_IF_MISSING = os.getenv("COMMENT_ON_EXISTING_JIRA_IF_MISSING", "false").lower() in {"1", "true", "yes", "on"}
+UPDATE_PR_COMMENT_ON_EXISTING_JIRA_IF_MISSING = (
+    os.getenv("UPDATE_PR_COMMENT_ON_EXISTING_JIRA_IF_MISSING", os.getenv("COMMENT_ON_EXISTING_JIRA_IF_MISSING", "false"))
+    .lower() in {"1", "true", "yes", "on"}
+)
 JIRA_TARGET_STATUS = os.getenv("JIRA_TARGET_STATUS", "")
 JIRA_TARGET_STATUS_PATH = [s.strip() for s in os.getenv("JIRA_TARGET_STATUS_PATH", "").split(",") if s.strip()]
 JIRA_SKIP_STATUSES = {s.strip().lower() for s in os.getenv("JIRA_SKIP_STATUSES", "Resume Development,Resume QA,Resume Release").split(",") if s.strip()}
@@ -613,7 +616,7 @@ def pr_comment_has_ticket(pr, issue_key: str) -> bool:
     return False
 
 def maybe_comment_existing_jira_if_missing(pr, issue_key: str, reason: str, repo_full_name: str) -> None:
-    if not COMMENT_ON_EXISTING_JIRA_IF_MISSING:
+    if not UPDATE_PR_COMMENT_ON_EXISTING_JIRA_IF_MISSING:
         return
     if not issue_key or issue_key == "UNKNOWN":
         return
