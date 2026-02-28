@@ -64,7 +64,7 @@ jobs:
           JIRA_RELEASE_APPROACH_VALUE: ${{ env.JIRA_RELEASE_APPROACH_VALUE }}
           JIRA_API_VERSION: "2"
 
-          MODE: "dry-run" # Set to "run" to create Jira tickets, "dry-run" for testing only
+          MODE: "run" # Set to "run" to create Jira tickets, "dry-run" for testing only
           VERBOSE: "1" # If MODE=run, set to "0" to reduce log verbosity. If MODE=dry-run, set to "1" for log verbosity
 
           # if testing only, grab only one renovate PR to process, create only one Jira ticket to confirm logic is correct
