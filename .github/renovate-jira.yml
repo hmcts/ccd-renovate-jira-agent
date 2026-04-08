@@ -14,7 +14,7 @@ critical_dependencies:
 github:
   comment: false
   add_labels: false
-  require_labels: ["Renovate Dependencies"]
+  require_labels: ["Renovate Dependencies", "Renovate-dependencies"]
 
 jira:
   project: "CCD"

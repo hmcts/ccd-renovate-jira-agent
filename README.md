@@ -27,6 +27,8 @@ export JIRA_PAT=<YOUR_JIRA_PAT>
 export JIRA_API_VERSION=2
 export FIX_TICKET_LABELS=true # Optional: update labels/epic/fixVersion/release approach on existing tickets
 export FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=false # Optional: allow updates even when MODE=dry-run
+export FIX_TICKET_COMPONENTS=true # Optional: update only the Jira component on existing tickets
+export FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE=false # Optional: allow component updates even when MODE=dry-run
 export FIX_TICKET_PR_LINKS=false # Optional: add PR links to existing Jira tickets when summary matches
 export VERBOSE_JIRA_DEDUPE=false # Optional: extra diagnostics for Jira dedupe
 export CREATE_PR_LINKS=true # Optional: add PR links on new Jira tickets
@@ -40,7 +42,7 @@ export JIRA_RELEASE_APPROACH_FIELD=customfield_12345 # Optional: Jira custom fie
 export JIRA_RELEASE_APPROACH_VALUE="Tier 1: CI/CD" # Optional: select value for Release approach
 ```
 
-When `MODE=dry-run`, updates are skipped unless `FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=true`.
+When `MODE=dry-run`, updates are skipped unless `FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=true` or `FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE=true`.
 
 ## Quick validation of JIRA PAT
 
@@ -58,6 +60,11 @@ LOCAL_CONFIG_PATH=.github/renovate-jira.yml VERBOSE=1 python main.py
 Single-ticket test run example:
 ```bash
 MODE=run GITHUB_REPO=hmcts/your-repo TEST_PR_NUMBER=1234 MAX_NEW_JIRA_TICKETS=1 VERBOSE=1 python main.py
+```
+
+Existing-ticket component-only test example:
+```bash
+MODE=run GITHUB_REPO=hmcts/ccd-case-document-am-api TEST_PR_NUMBER=1234 MAX_NEW_JIRA_TICKETS=0 VERBOSE=1 FIX_TICKET_COMPONENTS=true python main.py
 ```
 
 ## Per-Repo Configuration
@@ -81,7 +88,7 @@ critical_dependencies:
 github:
   comment: false
   add_labels: false
-  require_labels: ["Renovate Dependencies"]
+  require_labels: ["Renovate Dependencies", "Renovate-dependencies"]
 
 jira:
   project: "CCD"

@@ -53,6 +53,8 @@ JIRA_RELEASE_APPROACH_FIELD = os.getenv("JIRA_RELEASE_APPROACH_FIELD", "")
 JIRA_RELEASE_APPROACH_VALUE = os.getenv("JIRA_RELEASE_APPROACH_VALUE", "Tier 1: CI/CD")
 FIX_TICKET_LABELS = os.getenv("FIX_TICKET_LABELS", "").lower() in {"1", "true", "yes", "on"}
 FIX_TICKET_LABELS_EVEN_IN_DRY_MODE = os.getenv("FIX_TICKET_LABELS_EVEN_IN_DRY_MODE", "").lower() in {"1", "true", "yes", "on"}
+FIX_TICKET_COMPONENTS = os.getenv("FIX_TICKET_COMPONENTS", "").lower() in {"1", "true", "yes", "on"}
+FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE = os.getenv("FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE", "").lower() in {"1", "true", "yes", "on"}
 FIX_TICKET_PR_LINKS = os.getenv("FIX_TICKET_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
 VERBOSE_JIRA_DEDUPE = os.getenv("VERBOSE_JIRA_DEDUPE", "").lower() in {"1", "true", "yes", "on"}
 CREATE_PR_LINKS = os.getenv("CREATE_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
@@ -81,7 +83,7 @@ TEST_PR_NUMBER = _parse_optional_pr_number(os.getenv("TEST_PR_NUMBER", "0"))
 MAX_NEW_JIRA_TICKETS = int(os.getenv("MAX_NEW_JIRA_TICKETS", "0") or "0")
 
 def can_mutate_jira() -> bool:
-    return MODE != "dry-run" or FIX_TICKET_LABELS_EVEN_IN_DRY_MODE
+    return MODE != "dry-run" or FIX_TICKET_LABELS_EVEN_IN_DRY_MODE or FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE
 
 def can_add_pr_links() -> bool:
     return MODE != "dry-run"
@@ -94,6 +96,7 @@ VERBOSE = os.getenv("VERBOSE", "").lower() in {"1", "true", "yes", "on"}
 LOCAL_CONFIG_PATH = os.getenv("LOCAL_CONFIG_PATH")
 
 PAGE_SIZE = int(os.getenv("PAGE_SIZE", "50"))
+COMPONENT_REPO_MAPPINGS_FILE = os.getenv("COMPONENT_REPO_MAPPINGS_FILE", "Component-Repo-Mappings.txt")
 
 if not GITHUB_TOKEN:
     sys.exit("GITHUB_TOKEN required")
@@ -103,6 +106,38 @@ if not (JIRA_PAT or (JIRA_USER_EMAIL and JIRA_API_TOKEN)):
     sys.exit("Jira configuration missing: set JIRA_PAT or JIRA_USER_EMAIL/JIRA_API_TOKEN")
 
 gh = Github(auth=Auth.Token(GITHUB_TOKEN), per_page=PAGE_SIZE)
+
+def load_component_repo_mappings(path: str) -> Dict[str, str]:
+    mappings: Dict[str, str] = {}
+    if not path or not os.path.exists(path):
+        return mappings
+    try:
+        with open(path, "r") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                component, repo_slug = [part.strip() for part in line.split("=", 1)]
+                if component and repo_slug:
+                    mappings[repo_slug.lower()] = component
+    except Exception as e:
+        _elog(f"[WARN] Failed to load component mappings from {path}: {e}")
+    return mappings
+
+COMPONENT_REPO_MAPPINGS = load_component_repo_mappings(COMPONENT_REPO_MAPPINGS_FILE)
+
+def jira_component_for_pr(pr_url: str, repo_full_name: str = "") -> Optional[str]:
+    pr_url_lower = (pr_url or "").lower()
+    repo_slug = (repo_full_name or "").split("/")[-1].strip().lower()
+
+    if repo_slug and repo_slug in COMPONENT_REPO_MAPPINGS:
+        return COMPONENT_REPO_MAPPINGS[repo_slug]
+
+    for mapped_repo_slug, component in COMPONENT_REPO_MAPPINGS.items():
+        if mapped_repo_slug in pr_url_lower:
+            return component
+
+    return None
 
 def load_repo_config(repo) -> Dict[str, Any]:
     # Defaults apply whenever a repo config omits a key; repo settings override these values.
@@ -118,7 +153,7 @@ def load_repo_config(repo) -> Dict[str, Any]:
             "release_approach_field": JIRA_RELEASE_APPROACH_FIELD,
             "release_approach": JIRA_RELEASE_APPROACH_VALUE,
         },
-        "github": {"comment": True, "add_labels": True, "require_labels": ["Renovate Dependencies"]},
+        "github": {"comment": True, "add_labels": True, "require_labels": ["Renovate Dependencies", "Renovate-dependencies"]},
     }
     
     def merge_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -210,6 +245,7 @@ def jira_create_issue(
     labels: List[str],
     project: str,
     priority: str,
+    component: Optional[str] = None,
     release_approach_field: str = "",
     release_approach_value: Any = None,
 ) -> Dict[str, Any]:
@@ -225,6 +261,8 @@ def jira_create_issue(
             JIRA_EPIC_LINK_FIELD: JIRA_EPIC_KEY,
         }
     }
+    if component:
+        payload["fields"]["components"] = [{"name": component}]
     release_approach = _jira_single_select_value(release_approach_value)
     if release_approach_field and release_approach:
         payload["fields"][release_approach_field] = release_approach
@@ -443,7 +481,7 @@ def jira_get_issue(issue_key: str, extra_fields: Optional[List[str]] = None) -> 
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}"
     headers = {"Accept": "application/json", **jira_auth()}
     auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
-    fields_to_read = ["labels", "fixVersions", "status", JIRA_EPIC_LINK_FIELD, "issuelinks"]
+    fields_to_read = ["labels", "fixVersions", "status", "components", JIRA_EPIC_LINK_FIELD, "issuelinks"]
     if JIRA_RELEASE_APPROACH_FIELD:
         fields_to_read.append(JIRA_RELEASE_APPROACH_FIELD)
     for field_name in extra_fields or []:
@@ -553,40 +591,49 @@ def jira_ensure_ticket_fields(
     issue_key: str,
     desired_labels: List[str],
     fix_version: str,
+    component: Optional[str] = None,
     release_approach_field: str = "",
     release_approach_value: Any = None,
+    sync_labels_bundle: bool = True,
+    sync_component: bool = False,
 ) -> None:
     issue = jira_get_issue(issue_key, extra_fields=[release_approach_field] if release_approach_field else None)
     if not issue:
         return
-    _vlog(f"[INFO] Found Jira {issue_key}; checking labels/epic/fixVersion/release approach")
+    _vlog(f"[INFO] Found Jira {issue_key}; checking requested Jira field sync")
     fields = issue.get("fields", {}) or {}
     updates: Dict[str, Any] = {}
 
-    current_labels = set(fields.get("labels") or [])
-    desired_labels_set = set(desired_labels or [])
-    if desired_labels_set and not desired_labels_set.issubset(current_labels):
-        updates["labels"] = sorted(current_labels | desired_labels_set)
+    if sync_labels_bundle:
+        current_labels = set(fields.get("labels") or [])
+        desired_labels_set = set(desired_labels or [])
+        if desired_labels_set and not desired_labels_set.issubset(current_labels):
+            updates["labels"] = sorted(current_labels | desired_labels_set)
 
-    current_fix_versions = [v.get("name") for v in (fields.get("fixVersions") or []) if v.get("name")]
-    if fix_version and fix_version not in current_fix_versions:
-        updates["fixVersions"] = [{"name": name} for name in (current_fix_versions + [fix_version])]
+        current_fix_versions = [v.get("name") for v in (fields.get("fixVersions") or []) if v.get("name")]
+        if fix_version and fix_version not in current_fix_versions:
+            updates["fixVersions"] = [{"name": name} for name in (current_fix_versions + [fix_version])]
 
-    current_epic = fields.get(JIRA_EPIC_LINK_FIELD)
-    if JIRA_EPIC_KEY and current_epic != JIRA_EPIC_KEY:
-        updates[JIRA_EPIC_LINK_FIELD] = JIRA_EPIC_KEY
+        current_epic = fields.get(JIRA_EPIC_LINK_FIELD)
+        if JIRA_EPIC_KEY and current_epic != JIRA_EPIC_KEY:
+            updates[JIRA_EPIC_LINK_FIELD] = JIRA_EPIC_KEY
 
-    desired_release_approach = _jira_single_select_value(release_approach_value)
-    if release_approach_field and desired_release_approach:
-        current_release_approach = fields.get(release_approach_field)
-        if not _jira_single_select_matches(current_release_approach, desired_release_approach):
-            updates[release_approach_field] = desired_release_approach
+        desired_release_approach = _jira_single_select_value(release_approach_value)
+        if release_approach_field and desired_release_approach:
+            current_release_approach = fields.get(release_approach_field)
+            if not _jira_single_select_matches(current_release_approach, desired_release_approach):
+                updates[release_approach_field] = desired_release_approach
+
+    if sync_component:
+        current_components = [c.get("name") for c in (fields.get("components") or []) if c.get("name")]
+        if component and component not in current_components:
+            updates["components"] = [{"name": component}]
 
     if updates:
         _vlog(f"[INFO] Updating Jira {issue_key} fields: {sorted(updates.keys())}")
         jira_update_issue(issue_key, updates)
     else:
-        _vlog(f"[INFO] Jira {issue_key} already has desired labels/epic/fixVersion/release approach")
+        _vlog(f"[INFO] Jira {issue_key} already has the requested field values")
 
 def pr_has_ticket_in_comments(pr) -> Optional[str]:
     import re
@@ -711,6 +758,7 @@ def process_pr(repo, pr, cfg) -> bool:
         if not category:
             _vlog(f"[SKIP] PR #{pr.number} in {repo.full_name} did not match any rule")
             return False
+        jira_component = jira_component_for_pr(pr.html_url, repo.full_name)
         existing = pr_has_ticket_in_comments(pr)
         if existing and jira_is_withdrawn(existing):
             _vlog(f"[INFO] Jira {existing} is Withdrawn; creating a new ticket")
@@ -719,15 +767,18 @@ def process_pr(repo, pr, cfg) -> bool:
             if jira_has_skip_status(existing):
                 _log(f"[SKIP] PR #{pr.number} in {repo.full_name} has Jira ticket {existing} in skip status")
                 return False
-            if FIX_TICKET_LABELS:
+            if FIX_TICKET_LABELS or FIX_TICKET_COMPONENTS:
                 jira_cfg = cfg.get("jira", {})
                 labels_to_add = cfg.get("jira", {}).get("labels", [])
                 jira_ensure_ticket_fields(
                     existing,
                     labels_to_add,
                     JIRA_FIX_VERSION,
+                    jira_component,
                     jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                     jira_cfg.get("release_approach"),
+                    sync_labels_bundle=FIX_TICKET_LABELS,
+                    sync_component=FIX_TICKET_COMPONENTS,
                 )
             if UPDATE_PR_TITLE_WITH_EXISTING_JIRA:
                 maybe_update_pr_title_with_jira(pr, existing, repo.full_name)
@@ -742,15 +793,18 @@ def process_pr(repo, pr, cfg) -> bool:
             if jira_has_skip_status(existing):
                 _log(f"[SKIP] PR #{pr.number} in {repo.full_name} has Jira ticket {existing} in skip status")
                 return False
-            if FIX_TICKET_LABELS:
+            if FIX_TICKET_LABELS or FIX_TICKET_COMPONENTS:
                 jira_cfg = cfg.get("jira", {})
                 labels_to_add = cfg.get("jira", {}).get("labels", [])
                 jira_ensure_ticket_fields(
                     existing,
                     labels_to_add,
                     JIRA_FIX_VERSION,
+                    jira_component,
                     jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                     jira_cfg.get("release_approach"),
+                    sync_labels_bundle=FIX_TICKET_LABELS,
+                    sync_component=FIX_TICKET_COMPONENTS,
                 )
             if UPDATE_PR_TITLE_WITH_EXISTING_JIRA:
                 maybe_update_pr_title_with_jira(pr, existing, repo.full_name)
@@ -770,6 +824,7 @@ def process_pr(repo, pr, cfg) -> bool:
             labels_to_add,
             project,
             priority,
+            jira_component,
             jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
             jira_cfg.get("release_approach"),
         )
