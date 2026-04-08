@@ -19,6 +19,8 @@ github:
 jira:
   project: "CCD"
   labels: ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"]
+  fix_components: true
+  fix_components_even_in_dry_mode: false
   release_approach_field: "customfield_33400"
   release_approach: "Tier 1: CI/CD"
   priority:

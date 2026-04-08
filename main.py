@@ -139,6 +139,15 @@ def jira_component_for_pr(pr_url: str, repo_full_name: str = "") -> Optional[str
 
     return None
 
+def _cfg_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
 def load_repo_config(repo) -> Dict[str, Any]:
     # Defaults apply whenever a repo config omits a key; repo settings override these values.
     defaults = {
@@ -152,6 +161,8 @@ def load_repo_config(repo) -> Dict[str, Any]:
             "labels": ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"],
             "release_approach_field": JIRA_RELEASE_APPROACH_FIELD,
             "release_approach": JIRA_RELEASE_APPROACH_VALUE,
+            "fix_components": FIX_TICKET_COMPONENTS,
+            "fix_components_even_in_dry_mode": FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE,
         },
         "github": {"comment": True, "add_labels": True, "require_labels": ["Renovate Dependencies", "Renovate-dependencies"]},
     }
@@ -518,8 +529,8 @@ def jira_has_skip_status(issue_key: str) -> bool:
     status = jira_get_status_name(issue_key)
     return status.lower() in JIRA_SKIP_STATUSES if status else False
 
-def jira_update_issue(issue_key: str, fields: Dict[str, Any]) -> None:
-    if MODE == "dry-run" and not FIX_TICKET_LABELS_EVEN_IN_DRY_MODE:
+def jira_update_issue(issue_key: str, fields: Dict[str, Any], allow_in_dry_run: bool = False) -> None:
+    if MODE == "dry-run" and not allow_in_dry_run:
         _log(f"[DRY-RUN] Would update Jira {issue_key} fields: {list(fields.keys())}")
         return
     url = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/{JIRA_API_VERSION}/issue/{issue_key}"
@@ -596,6 +607,7 @@ def jira_ensure_ticket_fields(
     release_approach_value: Any = None,
     sync_labels_bundle: bool = True,
     sync_component: bool = False,
+    allow_in_dry_run: bool = False,
 ) -> None:
     issue = jira_get_issue(issue_key, extra_fields=[release_approach_field] if release_approach_field else None)
     if not issue:
@@ -631,7 +643,7 @@ def jira_ensure_ticket_fields(
 
     if updates:
         _vlog(f"[INFO] Updating Jira {issue_key} fields: {sorted(updates.keys())}")
-        jira_update_issue(issue_key, updates)
+        jira_update_issue(issue_key, updates, allow_in_dry_run=allow_in_dry_run)
     else:
         _vlog(f"[INFO] Jira {issue_key} already has the requested field values")
 
@@ -759,6 +771,13 @@ def process_pr(repo, pr, cfg) -> bool:
             _vlog(f"[SKIP] PR #{pr.number} in {repo.full_name} did not match any rule")
             return False
         jira_component = jira_component_for_pr(pr.html_url, repo.full_name)
+        jira_cfg = cfg.get("jira", {})
+        fix_ticket_components = _cfg_bool(jira_cfg.get("fix_components"), FIX_TICKET_COMPONENTS)
+        fix_ticket_components_even_in_dry_mode = _cfg_bool(
+            jira_cfg.get("fix_components_even_in_dry_mode"),
+            FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE,
+        )
+        allow_ticket_updates_in_dry_run = FIX_TICKET_LABELS_EVEN_IN_DRY_MODE or fix_ticket_components_even_in_dry_mode
         existing = pr_has_ticket_in_comments(pr)
         if existing and jira_is_withdrawn(existing):
             _vlog(f"[INFO] Jira {existing} is Withdrawn; creating a new ticket")
@@ -767,8 +786,7 @@ def process_pr(repo, pr, cfg) -> bool:
             if jira_has_skip_status(existing):
                 _log(f"[SKIP] PR #{pr.number} in {repo.full_name} has Jira ticket {existing} in skip status")
                 return False
-            if FIX_TICKET_LABELS or FIX_TICKET_COMPONENTS:
-                jira_cfg = cfg.get("jira", {})
+            if FIX_TICKET_LABELS or fix_ticket_components:
                 labels_to_add = cfg.get("jira", {}).get("labels", [])
                 jira_ensure_ticket_fields(
                     existing,
@@ -778,7 +796,8 @@ def process_pr(repo, pr, cfg) -> bool:
                     jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                     jira_cfg.get("release_approach"),
                     sync_labels_bundle=FIX_TICKET_LABELS,
-                    sync_component=FIX_TICKET_COMPONENTS,
+                    sync_component=fix_ticket_components,
+                    allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             if UPDATE_PR_TITLE_WITH_EXISTING_JIRA:
                 maybe_update_pr_title_with_jira(pr, existing, repo.full_name)
@@ -793,8 +812,7 @@ def process_pr(repo, pr, cfg) -> bool:
             if jira_has_skip_status(existing):
                 _log(f"[SKIP] PR #{pr.number} in {repo.full_name} has Jira ticket {existing} in skip status")
                 return False
-            if FIX_TICKET_LABELS or FIX_TICKET_COMPONENTS:
-                jira_cfg = cfg.get("jira", {})
+            if FIX_TICKET_LABELS or fix_ticket_components:
                 labels_to_add = cfg.get("jira", {}).get("labels", [])
                 jira_ensure_ticket_fields(
                     existing,
@@ -804,7 +822,8 @@ def process_pr(repo, pr, cfg) -> bool:
                     jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                     jira_cfg.get("release_approach"),
                     sync_labels_bundle=FIX_TICKET_LABELS,
-                    sync_component=FIX_TICKET_COMPONENTS,
+                    sync_component=fix_ticket_components,
+                    allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             if UPDATE_PR_TITLE_WITH_EXISTING_JIRA:
                 maybe_update_pr_title_with_jira(pr, existing, repo.full_name)
