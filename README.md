@@ -40,7 +40,10 @@ export JIRA_RELEASE_APPROACH_FIELD=customfield_12345 # Optional: Jira custom fie
 export JIRA_RELEASE_APPROACH_VALUE="Tier 1: CI/CD" # Optional: select value for Release approach
 ```
 
-When `MODE=dry-run`, updates are skipped unless `FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=true` or repo config enables `jira.fix_components_even_in_dry_mode: true`.
+When `MODE=dry-run`, no new Jira tickets are created. Existing-ticket updates can still be enabled via repo config, for example `jira.fix_components_even_in_dry_mode: true` and `jira.withdraw_duplicate_tickets_even_in_dry_mode: true`.
+Set `github.include_merged_prs_for_ticket_fixes: true` to let merged PRs participate in existing-ticket fixes such as component backfill and duplicate withdrawal. Closed PRs still do not create new Jira tickets.
+Set `github.include_closed_prs_for_ticket_fixes: true` to let closed unmerged PRs participate in existing-ticket fixes as well.
+Set `github.list_prs_where_author: true` to prefilter the initial PR list by author before the normal per-PR label checks run. Configure the author with `github.pr_author`.
 
 ## Quick validation of JIRA PAT
 
@@ -87,12 +90,20 @@ github:
   comment: false
   add_labels: false
   require_labels: ["Renovate Dependencies", "Renovate-dependencies"]
+  include_merged_prs_for_ticket_fixes: true
+  include_closed_prs_for_ticket_fixes: true
+  list_prs_where_author: true
+  pr_author: "renovate[bot]"
 
 jira:
   project: "CCD"
   labels: ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"]
   fix_components: true
-  fix_components_even_in_dry_mode: false
+  fix_components_even_in_dry_mode: true
+  withdraw_duplicate_tickets: true
+  withdraw_duplicate_tickets_even_in_dry_mode: true
+  transition_merged_existing_to_status: "Live"
+  transition_closed_unmerged_existing_to_status: "Withdrawn"
   release_approach_field: "customfield_12345"
   release_approach: "Tier 1: CI/CD"
   priority:
