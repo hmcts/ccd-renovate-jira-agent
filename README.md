@@ -16,6 +16,7 @@ export MODE=dry-run # or run
 export REPO_LIST_FILE=./repo-list.txt
 export TEST_PR_NUMBER=1234 # Optional: process only this PR number
 export MAX_NEW_JIRA_TICKETS=1 # Optional: stop after creating this many new Jira tickets
+export PR_PROCESS_DELAY_SECONDS=0 # Optional: delay between PRs; increase only if you hit rate limits
 export GITHUB_TOKEN=<YOUR-GITHUB-FINE-GRAINED-TOKEN>
 export JIRA_BASE_URL=https://tools.hmcts.net/jira
 
@@ -29,6 +30,7 @@ export FIX_TICKET_LABELS=true # Optional: update labels/epic/fixVersion/release 
 export FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=false # Optional: allow updates even when MODE=dry-run
 export FIX_TICKET_PR_LINKS=false # Optional: add PR links to existing Jira tickets when summary matches
 export VERBOSE_JIRA_DEDUPE=false # Optional: extra diagnostics for Jira dedupe
+export LOG_TIMINGS=true # Optional: log per-PR, per-repo, and total runtime timings
 export CREATE_PR_LINKS=true # Optional: add PR links on new Jira tickets
 export UPDATE_PR_TITLE_WITH_JIRA=true # Optional: prefix PR title with Jira key when a new ticket is created (e.g. CCD-123 :: <original title>)
 export UPDATE_PR_TITLE_WITH_EXISTING_JIRA=false # Optional: also prefix PR title for existing matched Jira tickets if missing
@@ -41,9 +43,11 @@ export JIRA_RELEASE_APPROACH_VALUE="Tier 1: CI/CD" # Optional: select value for 
 ```
 
 When `MODE=dry-run`, no new Jira tickets are created. Existing-ticket updates can still be enabled via repo config, for example `jira.fix_components_even_in_dry_mode: true` and `jira.withdraw_duplicate_tickets_even_in_dry_mode: true`.
-Set `github.include_merged_prs_for_ticket_fixes: true` to let merged PRs participate in existing-ticket fixes such as component backfill and duplicate withdrawal. Closed PRs still do not create new Jira tickets.
-Set `github.include_closed_prs_for_ticket_fixes: true` to let closed unmerged PRs participate in existing-ticket fixes as well.
+Set `github.mark_jira_live_when_linked_pr_merged: true` to let Jira maintenance transition linked tickets when the linked PR is merged.
+Set `github.mark_jira_withdrawn_when_linked_pr_closed_unmerged: true` to let Jira maintenance transition linked tickets when the linked PR is closed without merging.
 Set `github.list_prs_where_author: true` to prefilter the initial PR list by author before the normal per-PR label checks run. Configure the author with `github.pr_author`.
+Set top-level `pr_process_delay_seconds` in `.github/renovate-jira.yml` to override the global `PR_PROCESS_DELAY_SECONDS` env var for a specific repo.
+Set `github.update_pr_title_with_new_jira: false` and/or `github.update_pr_title_with_existing_jira: false` in `.github/renovate-jira.yml` to disable PR title edits from repo config.
 
 ## Quick validation of JIRA PAT
 
@@ -75,6 +79,7 @@ Example `.github/renovate-jira.yml`:
 ```yaml
 # Optional per-repo configuration for the Renovate->Jira agent
 enabled: true
+pr_process_delay_seconds: 0
 
 create_jira_for:
   security: true
@@ -90,10 +95,12 @@ github:
   comment: false
   add_labels: false
   require_labels: ["Renovate Dependencies", "Renovate-dependencies"]
-  include_merged_prs_for_ticket_fixes: true
-  include_closed_prs_for_ticket_fixes: true
+  mark_jira_live_when_linked_pr_merged: true
+  mark_jira_withdrawn_when_linked_pr_closed_unmerged: true
   list_prs_where_author: true
   pr_author: "renovate[bot]"
+  update_pr_title_with_new_jira: false
+  update_pr_title_with_existing_jira: false
 
 jira:
   project: "CCD"

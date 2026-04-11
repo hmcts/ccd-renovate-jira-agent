@@ -1,5 +1,6 @@
 # Optional per-repo configuration for the Renovate->Jira agent
 enabled: true
+pr_process_delay_seconds: 0
 
 create_jira_for:
   security: true
@@ -15,10 +16,12 @@ github:
   comment: false
   add_labels: false
   require_labels: ["Renovate Dependencies", "Renovate-dependencies"]
-  include_merged_prs_for_ticket_fixes: true
-  include_closed_prs_for_ticket_fixes: true
+  mark_jira_live_when_linked_pr_merged: true
+  mark_jira_withdrawn_when_linked_pr_closed_unmerged: true
   list_prs_where_author: true
   pr_author: "renovate[bot]"
+  update_pr_title_with_new_jira: false
+  update_pr_title_with_existing_jira: false
 
 jira:
   project: "CCD"
@@ -28,6 +31,7 @@ jira:
   withdraw_duplicate_tickets: true
   withdraw_duplicate_tickets_even_in_dry_mode: true
   transition_merged_existing_to_status: "Live"
+  transition_merged_existing_to_status_path: ["Blocked", "Resume Release", "Live"]
   transition_closed_unmerged_existing_to_status: "Withdrawn"
   release_approach_field: "customfield_33400"
   release_approach: "Tier 1: CI/CD"
