@@ -14,6 +14,7 @@ critical_dependencies:
 
 github:
   comment: false
+  comment_on_existing_jira_if_missing: false
   add_labels: false
   require_labels: ["Renovate Dependencies", "Renovate-dependencies"]
   mark_jira_live_when_linked_pr_merged: true
@@ -26,13 +27,20 @@ github:
 jira:
   project: "CCD"
   labels: ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"]
+  create_pr_links: true
+  fix_ticket_labels: true
+  fix_ticket_labels_even_in_dry_mode: true
   fix_components: true
   fix_components_even_in_dry_mode: true
+  fix_ticket_pr_links: false
   withdraw_duplicate_tickets: true
   withdraw_duplicate_tickets_even_in_dry_mode: true
   transition_merged_existing_to_status: "Live"
   transition_merged_existing_to_status_path: ["Blocked", "Resume Release", "Live"]
   transition_closed_unmerged_existing_to_status: "Withdrawn"
+  target_status: "Resume Development"
+  target_status_path: ["Blocked", "Resume Development"]
+  skip_statuses: ["Resume Development", "Resume QA", "Resume Release"]
   release_approach_field: "customfield_33400"
   release_approach: "Tier 1: CI/CD"
   priority:

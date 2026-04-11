@@ -189,16 +189,24 @@ def load_repo_config(repo) -> Dict[str, Any]:
             "labels": ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"],
             "release_approach_field": JIRA_RELEASE_APPROACH_FIELD,
             "release_approach": JIRA_RELEASE_APPROACH_VALUE,
+            "create_pr_links": CREATE_PR_LINKS,
+            "fix_ticket_labels": FIX_TICKET_LABELS,
+            "fix_ticket_labels_even_in_dry_mode": FIX_TICKET_LABELS_EVEN_IN_DRY_MODE,
             "fix_components": FIX_TICKET_COMPONENTS,
             "fix_components_even_in_dry_mode": FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE,
+            "fix_ticket_pr_links": FIX_TICKET_PR_LINKS,
             "withdraw_duplicate_tickets": JIRA_WITHDRAW_DUPLICATE_TICKETS,
             "withdraw_duplicate_tickets_even_in_dry_mode": JIRA_WITHDRAW_DUPLICATE_TICKETS_EVEN_IN_DRY_MODE,
             "transition_merged_existing_to_status": "",
             "transition_merged_existing_to_status_path": [],
+            "target_status": JIRA_TARGET_STATUS,
+            "target_status_path": JIRA_TARGET_STATUS_PATH,
+            "skip_statuses": sorted(JIRA_SKIP_STATUSES),
         },
         "github": {
             "comment": True,
             "add_labels": True,
+            "comment_on_existing_jira_if_missing": UPDATE_PR_COMMENT_ON_EXISTING_JIRA_IF_MISSING,
             "require_labels": ["Renovate Dependencies", "Renovate-dependencies"],
             "mark_jira_live_when_linked_pr_merged": False,
             "mark_jira_withdrawn_when_linked_pr_closed_unmerged": False,
@@ -590,6 +598,7 @@ def jira_find_existing_issue(
     required_labels: Optional[List[str]] = None,
     withdraw_duplicates: bool = False,
     allow_withdraw_in_dry_run: bool = False,
+    fix_ticket_pr_links: bool = False,
 ) -> Optional[str]:
     title_candidate = summary.replace("Dependency update: ", "").strip()
     title_candidate = re.sub(r"^[A-Z]+-\d+\s*::\s*", "", title_candidate)
@@ -644,7 +653,7 @@ def jira_find_existing_issue(
                         _log(f"[INFO] Jira {issue_key} matched PR URL in links")
                     matched_keys.append(issue_key)
                     continue
-                if pr_url and issue_key and FIX_TICKET_PR_LINKS and can_add_pr_links():
+                if pr_url and issue_key and fix_ticket_pr_links and can_add_pr_links():
                     if jira_add_pr_remotelink(issue_key, pr_url):
                         if VERBOSE and VERBOSE_JIRA_DEDUPE:
                             _log(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
@@ -675,7 +684,7 @@ def jira_find_existing_issue(
                 if pr_url and pr_url in description:
                     if VERBOSE and VERBOSE_JIRA_DEDUPE:
                         _log(f"[INFO] Jira {issue_key} matched PR URL in description")
-                    if pr_url and issue_key and FIX_TICKET_PR_LINKS:
+                    if pr_url and issue_key and fix_ticket_pr_links:
                         if jira_add_pr_remotelink(issue_key, pr_url):
                             if VERBOSE and VERBOSE_JIRA_DEDUPE:
                                 _log(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
@@ -686,7 +695,7 @@ def jira_find_existing_issue(
                         _log(f"[INFO] Jira {issue_key} matched PR URL in links")
                     matched_keys.append(issue_key)
                     continue
-                if pr_url and issue_key and FIX_TICKET_PR_LINKS:
+                if pr_url and issue_key and fix_ticket_pr_links:
                     if jira_add_pr_remotelink(issue_key, pr_url):
                         if VERBOSE and VERBOSE_JIRA_DEDUPE:
                             _log(f"[INFO] Jira {issue_key} linked PR URL via remotelink")
@@ -799,9 +808,10 @@ def jira_get_status_name(issue_key: str) -> str:
     status = (issue.get("fields", {}) or {}).get("status", {}) or {}
     return (status.get("name") or "").strip()
 
-def jira_has_skip_status(issue_key: str) -> bool:
+def jira_has_skip_status(issue_key: str, skip_statuses: Optional[set] = None) -> bool:
     status = jira_get_status_name(issue_key)
-    return status.lower() in JIRA_SKIP_STATUSES if status else False
+    effective_skip_statuses = skip_statuses if skip_statuses is not None else JIRA_SKIP_STATUSES
+    return status.lower() in effective_skip_statuses if status else False
 
 def jira_update_issue(issue_key: str, fields: Dict[str, Any], allow_in_dry_run: bool = False) -> None:
     if MODE == "dry-run" and not allow_in_dry_run:
@@ -973,8 +983,8 @@ def pr_comment_has_ticket(pr, issue_key: str) -> bool:
             return True
     return False
 
-def maybe_comment_existing_jira_if_missing(pr, issue_key: str, reason: str, repo_full_name: str) -> None:
-    if not UPDATE_PR_COMMENT_ON_EXISTING_JIRA_IF_MISSING:
+def maybe_comment_existing_jira_if_missing(pr, issue_key: str, reason: str, repo_full_name: str, enabled: bool = False) -> None:
+    if not enabled:
         return
     if not issue_key or issue_key == "UNKNOWN":
         return
@@ -1174,11 +1184,19 @@ def process_pr(repo, pr, cfg) -> bool:
             return False
         jira_component = jira_component_for_pr(pr.html_url, repo.full_name)
         jira_cfg = cfg.get("jira", {})
+        github_cfg = cfg.get("github", {})
+        create_pr_links = _cfg_bool(jira_cfg.get("create_pr_links"), CREATE_PR_LINKS)
+        fix_ticket_labels = _cfg_bool(jira_cfg.get("fix_ticket_labels"), FIX_TICKET_LABELS)
+        fix_ticket_labels_even_in_dry_mode = _cfg_bool(
+            jira_cfg.get("fix_ticket_labels_even_in_dry_mode"),
+            FIX_TICKET_LABELS_EVEN_IN_DRY_MODE,
+        )
         fix_ticket_components = _cfg_bool(jira_cfg.get("fix_components"), FIX_TICKET_COMPONENTS)
         fix_ticket_components_even_in_dry_mode = _cfg_bool(
             jira_cfg.get("fix_components_even_in_dry_mode"),
             FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE,
         )
+        fix_ticket_pr_links = _cfg_bool(jira_cfg.get("fix_ticket_pr_links"), FIX_TICKET_PR_LINKS)
         withdraw_duplicate_tickets = _cfg_bool(
             jira_cfg.get("withdraw_duplicate_tickets"),
             JIRA_WITHDRAW_DUPLICATE_TICKETS,
@@ -1194,28 +1212,35 @@ def process_pr(repo, pr, cfg) -> bool:
         transition_closed_unmerged_existing_to_status = (
             jira_cfg.get("transition_closed_unmerged_existing_to_status") or ""
         ).strip()
+        target_status = (jira_cfg.get("target_status") or "").strip()
+        target_status_path = _cfg_status_path(jira_cfg.get("target_status_path"))
+        skip_statuses = {s.strip().lower() for s in (jira_cfg.get("skip_statuses") or []) if str(s).strip()}
         mark_jira_live_when_linked_pr_merged = _cfg_bool(
-            cfg.get("github", {}).get("mark_jira_live_when_linked_pr_merged"),
+            github_cfg.get("mark_jira_live_when_linked_pr_merged"),
             False,
         )
         mark_jira_withdrawn_when_linked_pr_closed_unmerged = _cfg_bool(
-            cfg.get("github", {}).get("mark_jira_withdrawn_when_linked_pr_closed_unmerged"),
+            github_cfg.get("mark_jira_withdrawn_when_linked_pr_closed_unmerged"),
             False,
         )
         update_pr_title_with_jira = _cfg_bool(
-            cfg.get("github", {}).get("update_pr_title_with_new_jira"),
+            github_cfg.get("update_pr_title_with_new_jira"),
             UPDATE_PR_TITLE_WITH_JIRA,
         )
         update_pr_title_with_existing_jira = _cfg_bool(
-            cfg.get("github", {}).get("update_pr_title_with_existing_jira"),
+            github_cfg.get("update_pr_title_with_existing_jira"),
             UPDATE_PR_TITLE_WITH_EXISTING_JIRA,
         )
+        comment_on_existing_jira_if_missing = _cfg_bool(
+            github_cfg.get("comment_on_existing_jira_if_missing"),
+            UPDATE_PR_COMMENT_ON_EXISTING_JIRA_IF_MISSING,
+        )
         allow_ticket_updates_in_dry_run = (
-            FIX_TICKET_LABELS_EVEN_IN_DRY_MODE
+            fix_ticket_labels_even_in_dry_mode
             or fix_ticket_components_even_in_dry_mode
             or withdraw_duplicate_tickets_even_in_dry_mode
         )
-        can_fix_existing_ticket = FIX_TICKET_LABELS or fix_ticket_components or withdraw_duplicate_tickets
+        can_fix_existing_ticket = fix_ticket_labels or fix_ticket_components or withdraw_duplicate_tickets
         is_open_pr = pr.state == "open"
         is_merged_pr = pr.state == "closed" and _pr_is_merged(pr)
         is_closed_unmerged_pr = _pr_is_closed_unmerged(pr)
@@ -1229,7 +1254,7 @@ def process_pr(repo, pr, cfg) -> bool:
             ):
                 _vlog(f"[SKIP] PR #{pr.number} in {repo.full_name} is not eligible in state={pr.state}")
                 return False
-        require_labels = set(l.lower() for l in cfg.get("github", {}).get("require_labels", []))
+        require_labels = set(l.lower() for l in github_cfg.get("require_labels", []))
         if not require_labels:
             # Backward compatibility for older configs.
             require_labels = set(l.lower() for l in cfg.get("labels", {}).get("require", []))
@@ -1264,10 +1289,10 @@ def process_pr(repo, pr, cfg) -> bool:
             _vlog(f"[INFO] Jira {existing} is Withdrawn; creating a new ticket")
             existing = None
         if existing:
-            if jira_has_skip_status(existing):
+            if jira_has_skip_status(existing, skip_statuses):
                 _log(f"[SKIP] PR #{pr.number} in {repo.full_name} has Jira ticket {existing} in skip status")
                 return False
-            if FIX_TICKET_LABELS or fix_ticket_components:
+            if fix_ticket_labels or fix_ticket_components:
                 labels_to_add = cfg.get("jira", {}).get("labels", [])
                 jira_ensure_ticket_fields(
                     existing,
@@ -1276,7 +1301,7 @@ def process_pr(repo, pr, cfg) -> bool:
                     jira_component,
                     jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                     jira_cfg.get("release_approach"),
-                    sync_labels_bundle=FIX_TICKET_LABELS,
+                    sync_labels_bundle=fix_ticket_labels,
                     sync_component=fix_ticket_components,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
@@ -1300,8 +1325,8 @@ def process_pr(repo, pr, cfg) -> bool:
                 )
             if update_pr_title_with_existing_jira:
                 maybe_update_pr_title_with_jira(pr, existing, repo.full_name, enabled=update_pr_title_with_existing_jira)
-            if cfg.get("github", {}).get("comment", True):
-                maybe_comment_existing_jira_if_missing(pr, existing, reason, repo.full_name)
+            if github_cfg.get("comment", True):
+                maybe_comment_existing_jira_if_missing(pr, existing, reason, repo.full_name, enabled=comment_on_existing_jira_if_missing)
             _log(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing}")
             return False
         summary = f"Dependency update: {pr.title}"
@@ -1312,12 +1337,13 @@ def process_pr(repo, pr, cfg) -> bool:
             required_existing_labels,
             withdraw_duplicates=withdraw_duplicate_tickets,
             allow_withdraw_in_dry_run=withdraw_duplicate_tickets_even_in_dry_mode,
+            fix_ticket_pr_links=fix_ticket_pr_links,
         )
         if existing:
-            if jira_has_skip_status(existing):
+            if jira_has_skip_status(existing, skip_statuses):
                 _log(f"[SKIP] PR #{pr.number} in {repo.full_name} has Jira ticket {existing} in skip status")
                 return False
-            if FIX_TICKET_LABELS or fix_ticket_components:
+            if fix_ticket_labels or fix_ticket_components:
                 labels_to_add = cfg.get("jira", {}).get("labels", [])
                 jira_ensure_ticket_fields(
                     existing,
@@ -1326,7 +1352,7 @@ def process_pr(repo, pr, cfg) -> bool:
                     jira_component,
                     jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                     jira_cfg.get("release_approach"),
-                    sync_labels_bundle=FIX_TICKET_LABELS,
+                    sync_labels_bundle=fix_ticket_labels,
                     sync_component=fix_ticket_components,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
@@ -1350,8 +1376,8 @@ def process_pr(repo, pr, cfg) -> bool:
                 )
             if update_pr_title_with_existing_jira:
                 maybe_update_pr_title_with_jira(pr, existing, repo.full_name, enabled=update_pr_title_with_existing_jira)
-            if cfg.get("github", {}).get("comment", True):
-                maybe_comment_existing_jira_if_missing(pr, existing, reason, repo.full_name)
+            if github_cfg.get("comment", True):
+                maybe_comment_existing_jira_if_missing(pr, existing, reason, repo.full_name, enabled=comment_on_existing_jira_if_missing)
             _log(f"[SKIP] PR #{pr.number} in {repo.full_name} already has Jira ticket {existing} (summary+PR link)")
             return False
         if not is_open_pr:
@@ -1380,22 +1406,22 @@ def process_pr(repo, pr, cfg) -> bool:
             jira_cfg.get("release_approach"),
         )
         issue_key = jira_resp.get("key", "UNKNOWN")
-        if pr.html_url and CREATE_PR_LINKS and can_add_pr_links():
+        if pr.html_url and create_pr_links and can_add_pr_links():
             jira_add_pr_remotelink(issue_key, pr.html_url)
         maybe_update_pr_title_with_jira(pr, issue_key, repo.full_name, enabled=update_pr_title_with_jira)
-        if JIRA_TARGET_STATUS_PATH:
-            jira_transition_issue_path(issue_key, JIRA_TARGET_STATUS_PATH)
-        elif JIRA_TARGET_STATUS:
-            jira_transition_issue(issue_key, JIRA_TARGET_STATUS)
+        if target_status_path:
+            jira_transition_issue_path(issue_key, target_status_path)
+        elif target_status:
+            jira_transition_issue(issue_key, target_status)
         comment = f"Created Jira issue {issue_key} to track this Renovate PR. Reason: {reason}"
         if MODE != "dry-run":
-            if cfg.get("github", {}).get("comment", True):
+            if github_cfg.get("comment", True):
                 try:
                     pr.create_issue_comment(comment)
                     setattr(pr, "_cached_issue_comment_bodies", None)
                 except Exception as e:
                     _elog(f"Warning: failed to comment on PR #{pr.number} in {repo.full_name}: {e}")
-            if cfg.get("github", {}).get("add_labels", True):
+            if github_cfg.get("add_labels", True):
                 try:
                     pr.add_to_labels(*labels_to_add)
                 except Exception as e:
@@ -1414,6 +1440,11 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
         return
 
     required_existing_labels = jira_cfg.get("labels", [])
+    fix_ticket_labels = _cfg_bool(jira_cfg.get("fix_ticket_labels"), FIX_TICKET_LABELS)
+    fix_ticket_labels_even_in_dry_mode = _cfg_bool(
+        jira_cfg.get("fix_ticket_labels_even_in_dry_mode"),
+        FIX_TICKET_LABELS_EVEN_IN_DRY_MODE,
+    )
     withdraw_duplicate_tickets = _cfg_bool(
         jira_cfg.get("withdraw_duplicate_tickets"),
         JIRA_WITHDRAW_DUPLICATE_TICKETS,
@@ -1427,8 +1458,9 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
         jira_cfg.get("fix_components_even_in_dry_mode"),
         FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE,
     )
+    skip_statuses = {s.strip().lower() for s in (jira_cfg.get("skip_statuses") or []) if str(s).strip()}
     allow_ticket_updates_in_dry_run = (
-        FIX_TICKET_LABELS_EVEN_IN_DRY_MODE
+        fix_ticket_labels_even_in_dry_mode
         or fix_ticket_components_even_in_dry_mode
         or withdraw_duplicate_tickets_even_in_dry_mode
     )
@@ -1479,7 +1511,7 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
         )
         if not canonical_issue or jira_is_withdrawn(canonical_issue):
             continue
-        if jira_has_skip_status(canonical_issue):
+        if jira_has_skip_status(canonical_issue, skip_statuses):
             _log(f"[SKIP] Jira {canonical_issue} for {pr_url} is in skip status")
             continue
 
@@ -1487,7 +1519,7 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
         if not pr:
             continue
 
-        if FIX_TICKET_LABELS or fix_ticket_components:
+        if fix_ticket_labels or fix_ticket_components:
             jira_ensure_ticket_fields(
                 canonical_issue,
                 jira_cfg.get("labels", []),
@@ -1495,7 +1527,7 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
                 jira_component,
                 jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                 jira_cfg.get("release_approach"),
-                sync_labels_bundle=FIX_TICKET_LABELS,
+                sync_labels_bundle=fix_ticket_labels,
                 sync_component=fix_ticket_components,
                 allow_in_dry_run=allow_ticket_updates_in_dry_run,
             )
