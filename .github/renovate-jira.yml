@@ -35,9 +35,9 @@ jira:
   fix_ticket_pr_links: false
   withdraw_duplicate_tickets: true
   withdraw_duplicate_tickets_even_in_dry_mode: true
-  transition_merged_existing_to_status: "Live"
-  transition_merged_existing_to_status_path: ["Blocked", "Resume Release", "Live"]
-  transition_closed_unmerged_existing_to_status: "Withdrawn"
+  transition_merged_existing_via: "Released to production"
+  transition_merged_existing_path: ["Blocked", "Resume Release", "Released to production"]
+  transition_closed_unmerged_existing_via: "Withdrawn"
   target_status: "Resume Development"
   target_status_path: ["Blocked", "Resume Development"]
   skip_statuses: ["Resume Development", "Resume QA", "Resume Release"]

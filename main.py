@@ -197,8 +197,9 @@ def load_repo_config(repo) -> Dict[str, Any]:
             "fix_ticket_pr_links": FIX_TICKET_PR_LINKS,
             "withdraw_duplicate_tickets": JIRA_WITHDRAW_DUPLICATE_TICKETS,
             "withdraw_duplicate_tickets_even_in_dry_mode": JIRA_WITHDRAW_DUPLICATE_TICKETS_EVEN_IN_DRY_MODE,
-            "transition_merged_existing_to_status": "",
-            "transition_merged_existing_to_status_path": [],
+            "transition_merged_existing_via": "",
+            "transition_merged_existing_path": [],
+            "transition_closed_unmerged_existing_via": "",
             "target_status": JIRA_TARGET_STATUS,
             "target_status_path": JIRA_TARGET_STATUS_PATH,
             "skip_statuses": sorted(JIRA_SKIP_STATUSES),
@@ -1205,12 +1206,12 @@ def process_pr(repo, pr, cfg) -> bool:
             jira_cfg.get("withdraw_duplicate_tickets_even_in_dry_mode"),
             JIRA_WITHDRAW_DUPLICATE_TICKETS_EVEN_IN_DRY_MODE,
         )
-        transition_merged_existing_to_status = (jira_cfg.get("transition_merged_existing_to_status") or "").strip()
-        transition_merged_existing_to_status_path = _cfg_status_path(
-            jira_cfg.get("transition_merged_existing_to_status_path")
+        transition_merged_existing_via = (jira_cfg.get("transition_merged_existing_via") or "").strip()
+        transition_merged_existing_path = _cfg_status_path(
+            jira_cfg.get("transition_merged_existing_path")
         )
-        transition_closed_unmerged_existing_to_status = (
-            jira_cfg.get("transition_closed_unmerged_existing_to_status") or ""
+        transition_closed_unmerged_existing_via = (
+            jira_cfg.get("transition_closed_unmerged_existing_via") or ""
         ).strip()
         target_status = (jira_cfg.get("target_status") or "").strip()
         target_status_path = _cfg_status_path(jira_cfg.get("target_status_path"))
@@ -1305,22 +1306,22 @@ def process_pr(repo, pr, cfg) -> bool:
                     sync_component=fix_ticket_components,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
-            if is_merged_pr and transition_merged_existing_to_status_path:
+            if is_merged_pr and transition_merged_existing_path:
                 jira_transition_issue_path(
                     existing,
-                    transition_merged_existing_to_status_path,
+                    transition_merged_existing_path,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
-            elif is_merged_pr and transition_merged_existing_to_status:
+            elif is_merged_pr and transition_merged_existing_via:
                 jira_transition_issue(
                     existing,
-                    transition_merged_existing_to_status,
+                    transition_merged_existing_via,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
-            elif is_closed_unmerged_pr and transition_closed_unmerged_existing_to_status:
+            elif is_closed_unmerged_pr and transition_closed_unmerged_existing_via:
                 jira_transition_issue(
                     existing,
-                    transition_closed_unmerged_existing_to_status,
+                    transition_closed_unmerged_existing_via,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             if update_pr_title_with_existing_jira:
@@ -1356,22 +1357,22 @@ def process_pr(repo, pr, cfg) -> bool:
                     sync_component=fix_ticket_components,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
-            if is_merged_pr and transition_merged_existing_to_status_path:
+            if is_merged_pr and transition_merged_existing_path:
                 jira_transition_issue_path(
                     existing,
-                    transition_merged_existing_to_status_path,
+                    transition_merged_existing_path,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
-            elif is_merged_pr and transition_merged_existing_to_status:
+            elif is_merged_pr and transition_merged_existing_via:
                 jira_transition_issue(
                     existing,
-                    transition_merged_existing_to_status,
+                    transition_merged_existing_via,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
-            elif is_closed_unmerged_pr and transition_closed_unmerged_existing_to_status:
+            elif is_closed_unmerged_pr and transition_closed_unmerged_existing_via:
                 jira_transition_issue(
                     existing,
-                    transition_closed_unmerged_existing_to_status,
+                    transition_closed_unmerged_existing_via,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             if update_pr_title_with_existing_jira:
@@ -1465,12 +1466,12 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
         or withdraw_duplicate_tickets_even_in_dry_mode
     )
     project = jira_cfg.get("project", DEFAULT_JIRA_PROJECT)
-    transition_merged_existing_to_status = (jira_cfg.get("transition_merged_existing_to_status") or "").strip()
-    transition_merged_existing_to_status_path = _cfg_status_path(
-        jira_cfg.get("transition_merged_existing_to_status_path")
+    transition_merged_existing_via = (jira_cfg.get("transition_merged_existing_via") or "").strip()
+    transition_merged_existing_path = _cfg_status_path(
+        jira_cfg.get("transition_merged_existing_path")
     )
-    transition_closed_unmerged_existing_to_status = (
-        jira_cfg.get("transition_closed_unmerged_existing_to_status") or ""
+    transition_closed_unmerged_existing_via = (
+        jira_cfg.get("transition_closed_unmerged_existing_via") or ""
     ).strip()
 
     started = time.perf_counter()
@@ -1533,23 +1534,23 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
             )
 
         if _pr_is_merged(pr):
-            if include_merged and transition_merged_existing_to_status_path:
+            if include_merged and transition_merged_existing_path:
                 jira_transition_issue_path(
                     canonical_issue,
-                    transition_merged_existing_to_status_path,
+                    transition_merged_existing_path,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
-            elif include_merged and transition_merged_existing_to_status:
+            elif include_merged and transition_merged_existing_via:
                 jira_transition_issue(
                     canonical_issue,
-                    transition_merged_existing_to_status,
+                    transition_merged_existing_via,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
         elif _pr_is_closed_unmerged(pr):
-            if include_closed_unmerged and transition_closed_unmerged_existing_to_status:
+            if include_closed_unmerged and transition_closed_unmerged_existing_via:
                 jira_transition_issue(
                     canonical_issue,
-                    transition_closed_unmerged_existing_to_status,
+                    transition_closed_unmerged_existing_via,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
 
