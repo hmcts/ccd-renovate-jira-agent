@@ -16,6 +16,7 @@ export MODE=dry-run # or run
 export REPO_LIST_FILE=./repo-list.txt
 export TEST_PR_NUMBER=1234 # Optional: process only this PR number
 export MAX_NEW_JIRA_TICKETS=1 # Optional: stop after creating this many new Jira tickets
+export PR_PROCESS_DELAY_SECONDS=0 # Optional: delay between PRs; increase only if you hit rate limits
 export GITHUB_TOKEN=<YOUR-GITHUB-FINE-GRAINED-TOKEN>
 export JIRA_BASE_URL=https://tools.hmcts.net/jira
 
@@ -25,22 +26,17 @@ export JIRA_BASE_URL=https://tools.hmcts.net/jira
 export JIRA_PAT=<YOUR_JIRA_PAT>
 
 export JIRA_API_VERSION=2
-export FIX_TICKET_LABELS=true # Optional: update labels/epic/fixVersion/release approach on existing tickets
-export FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=false # Optional: allow updates even when MODE=dry-run
-export FIX_TICKET_PR_LINKS=false # Optional: add PR links to existing Jira tickets when summary matches
 export VERBOSE_JIRA_DEDUPE=false # Optional: extra diagnostics for Jira dedupe
-export CREATE_PR_LINKS=true # Optional: add PR links on new Jira tickets
-export UPDATE_PR_TITLE_WITH_JIRA=true # Optional: prefix PR title with Jira key when a new ticket is created (e.g. CCD-123 :: <original title>)
-export UPDATE_PR_TITLE_WITH_EXISTING_JIRA=false # Optional: also prefix PR title for existing matched Jira tickets if missing
-export UPDATE_PR_COMMENT_ON_EXISTING_JIRA_IF_MISSING=false # Optional: add PR comment for existing matched Jira if key is not already mentioned in PR comments
-export JIRA_TARGET_STATUS="Resume Development" # Optional: transition tickets to this status
-export JIRA_TARGET_STATUS_PATH="Blocked,Resume Development" # Optional: comma-separated transition path
-export JIRA_SKIP_STATUSES="Resume Development,Resume QA,Resume Release" # Optional: skip tickets in these statuses
+export LOG_TIMINGS=true # Optional: log per-PR, per-repo, and total runtime timings
 export JIRA_RELEASE_APPROACH_FIELD=customfield_12345 # Optional: Jira custom field id for "Release approach"
 export JIRA_RELEASE_APPROACH_VALUE="Tier 1: CI/CD" # Optional: select value for Release approach
 ```
 
-When `MODE=dry-run`, updates are skipped unless `FIX_TICKET_LABELS_EVEN_IN_DRY_MODE=true` or repo config enables `jira.fix_components_even_in_dry_mode: true`.
+When `MODE=dry-run`, no new Jira tickets are created. Most behavior flags now live in repo config, for example `jira.fix_ticket_labels`, `jira.fix_components_even_in_dry_mode`, `jira.withdraw_duplicate_tickets`, `jira.target_status_path`, and `github.update_pr_title_with_new_jira`.
+Set `github.mark_jira_live_when_linked_pr_merged: true` to let Jira maintenance transition linked tickets when the linked PR is merged.
+Set `github.mark_jira_withdrawn_when_linked_pr_closed_unmerged: true` to let Jira maintenance transition linked tickets when the linked PR is closed without merging.
+Set `github.list_prs_where_author: true` to prefilter the initial PR list by author before the normal per-PR label checks run. Configure the author with `github.pr_author`.
+Set top-level `pr_process_delay_seconds` in `.github/renovate-jira.yml` to override the global `PR_PROCESS_DELAY_SECONDS` env var for a specific repo.
 
 ## Quick validation of JIRA PAT
 
@@ -72,6 +68,7 @@ Example `.github/renovate-jira.yml`:
 ```yaml
 # Optional per-repo configuration for the Renovate->Jira agent
 enabled: true
+pr_process_delay_seconds: 0
 
 create_jira_for:
   security: true
@@ -85,14 +82,33 @@ critical_dependencies:
 
 github:
   comment: false
+  comment_on_existing_jira_if_missing: false
   add_labels: false
   require_labels: ["Renovate Dependencies", "Renovate-dependencies"]
+  mark_jira_live_when_linked_pr_merged: true
+  mark_jira_withdrawn_when_linked_pr_closed_unmerged: true
+  list_prs_where_author: true
+  pr_author: "renovate[bot]"
+  update_pr_title_with_new_jira: false
+  update_pr_title_with_existing_jira: false
 
 jira:
   project: "CCD"
   labels: ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"]
+  create_pr_links: true
+  fix_ticket_labels: true
+  fix_ticket_labels_even_in_dry_mode: true
   fix_components: true
-  fix_components_even_in_dry_mode: false
+  fix_components_even_in_dry_mode: true
+  fix_ticket_pr_links: false
+  withdraw_duplicate_tickets: true
+  withdraw_duplicate_tickets_even_in_dry_mode: true
+  transition_merged_existing_via: "Released to production"
+  transition_merged_existing_path: ["Blocked", "Resume Release", "Released to production"]
+  transition_closed_unmerged_existing_via: "Withdrawn"
+  target_status: "Resume Development"
+  target_status_path: ["Blocked", "Resume Development"]
+  skip_statuses: ["Resume Development", "Resume QA", "Resume Release"]
   release_approach_field: "customfield_12345"
   release_approach: "Tier 1: CI/CD"
   priority:

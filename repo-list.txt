@@ -3,6 +3,11 @@
 # org-a/service-one
 # org-b/team-repo
 
+hmcts/hmc-hmi-inbound-adapter
+hmcts/hmc-hmi-outbound-adapter
+hmcts/hmc-cft-hearing-service
+hmcts/cpo-case-payment-orders-api
+hmcts/aac-manage-case-assignment
 hmcts/ccd-definition-store-api
 hmcts/ccd-data-store-api
 hmcts/ccd-user-profile-api
@@ -14,8 +19,3 @@ hmcts/ccd-next-hearing-date-updater
 hmcts/ccd-api-gateway
 hmcts/ccd-case-activity-api
 hmcts/ccd-case-print-service
-hmcts/hmc-hmi-inbound-adapter
-hmcts/hmc-hmi-outbound-adapter
-hmcts/hmc-cft-hearing-service
-hmcts/cpo-case-payment-orders-api
-hmcts/aac-manage-case-assignment
