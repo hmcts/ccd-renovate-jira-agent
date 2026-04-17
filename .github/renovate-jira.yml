@@ -33,6 +33,8 @@ jira:
   fix_components: true
   fix_components_even_in_dry_mode: true
   fix_ticket_pr_links: false
+  sync_mend_confidence: true
+  sync_mend_confidence_even_in_dry_mode: true
   withdraw_duplicate_tickets: true
   withdraw_duplicate_tickets_even_in_dry_mode: true
   transition_merged_existing_via: "Released to production"

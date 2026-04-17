@@ -9,12 +9,16 @@ import sys
 import time
 import logging
 import re
+import colorsys
+import base64
+from io import BytesIO
 import yaml
 from functools import lru_cache
 from typing import Iterable, Dict, Any, List, Optional
 import requests
 from requests.auth import HTTPBasicAuth
 from github import Github, Auth
+from PIL import Image
 from decision import needs_jira
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -59,6 +63,8 @@ FIX_TICKET_LABELS_EVEN_IN_DRY_MODE = os.getenv("FIX_TICKET_LABELS_EVEN_IN_DRY_MO
 FIX_TICKET_COMPONENTS = os.getenv("FIX_TICKET_COMPONENTS", "").lower() in {"1", "true", "yes", "on"}
 FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE = os.getenv("FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE", "").lower() in {"1", "true", "yes", "on"}
 FIX_TICKET_PR_LINKS = os.getenv("FIX_TICKET_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
+SYNC_MEND_CONFIDENCE = os.getenv("SYNC_MEND_CONFIDENCE", "true").lower() in {"1", "true", "yes", "on"}
+SYNC_MEND_CONFIDENCE_EVEN_IN_DRY_MODE = os.getenv("SYNC_MEND_CONFIDENCE_EVEN_IN_DRY_MODE", "").lower() in {"1", "true", "yes", "on"}
 VERBOSE_JIRA_DEDUPE = os.getenv("VERBOSE_JIRA_DEDUPE", "").lower() in {"1", "true", "yes", "on"}
 CREATE_PR_LINKS = os.getenv("CREATE_PR_LINKS", "").lower() in {"1", "true", "yes", "on"}
 UPDATE_PR_TITLE_WITH_JIRA = os.getenv("UPDATE_PR_TITLE_WITH_JIRA", "true").lower() in {"1", "true", "yes", "on"}
@@ -124,6 +130,7 @@ if not (JIRA_PAT or (JIRA_USER_EMAIL and JIRA_API_TOKEN)):
 gh = Github(auth=Auth.Token(GITHUB_TOKEN), per_page=PAGE_SIZE)
 _REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "30"))
 _jira_session = requests.Session()
+_badge_session = requests.Session()
 
 def load_component_repo_mappings(path: str) -> Dict[str, str]:
     mappings: Dict[str, str] = {}
@@ -175,6 +182,107 @@ def _cfg_status_path(value: Any) -> List[str]:
         return [item.strip() for item in value.split(",") if item.strip()]
     return []
 
+def _mend_badge_request(url: str) -> requests.Response:
+    return _badge_session.get(
+        url,
+        headers={"Accept": "image/svg+xml,image/png;q=0.9,*/*;q=0.1"},
+        timeout=_REQUEST_TIMEOUT,
+    )
+
+def _extract_confidence_badge_url(pr_body: str) -> Optional[str]:
+    match = re.search(r"!\[confidence\]\((https://developer\.mend\.io/api/mc/badges/confidence/[^)\s]+)\)", pr_body or "", re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return None
+
+def _badge_png_from_svg(svg_text: str) -> bytes:
+    match = re.search(r'data:image/png;base64,([^"\']+)', svg_text or "")
+    if not match:
+        raise ValueError("Confidence badge SVG did not contain an embedded PNG")
+    return base64.b64decode(match.group(1))
+
+def _classify_confidence_badge(png_bytes: bytes) -> Optional[str]:
+    img = Image.open(BytesIO(png_bytes)).convert("RGBA")
+    width, height = img.size
+    pixels = img.load()
+    samples: List[tuple[int, int, int]] = []
+    for x in range(int(width * 0.55), width):
+        for y in range(height):
+            r, g, b, a = pixels[x, y]
+            if a < 200:
+                continue
+            if r > 245 and g > 245 and b > 245:
+                continue
+            samples.append((r, g, b))
+    if not samples:
+        return None
+    avg_r = sum(r for r, _, _ in samples) / len(samples)
+    avg_g = sum(g for _, g, _ in samples) / len(samples)
+    avg_b = sum(b for _, _, b in samples) / len(samples)
+    hue, saturation, _ = colorsys.rgb_to_hsv(avg_r / 255.0, avg_g / 255.0, avg_b / 255.0)
+    hue_degrees = hue * 360.0
+    if saturation < 0.18:
+        return "neutral"
+    if avg_r > avg_g and hue_degrees < 25:
+        return "low"
+    if 70 <= hue_degrees <= 165:
+        return "very high" if width >= 430 else "high"
+    if width >= 395:
+        return "neutral"
+    return None
+
+@lru_cache(maxsize=256)
+def fetch_pr_confidence(pr_html_url: str, pr_body: str = "") -> Optional[str]:
+    badge_url = _extract_confidence_badge_url(pr_body or "")
+    if not badge_url:
+        return None
+    try:
+        resp = _mend_badge_request(badge_url)
+        resp.raise_for_status()
+        content_type = (resp.headers.get("Content-Type") or "").lower()
+        if "svg" in content_type or resp.content.lstrip().startswith(b"<svg"):
+            png_bytes = _badge_png_from_svg(resp.text)
+        else:
+            png_bytes = resp.content
+        confidence = _classify_confidence_badge(png_bytes)
+        if confidence:
+            _vlog(f"[INFO] Extracted Mend confidence for {pr_html_url}: {confidence}")
+        else:
+            _vlog(f"[WARN] Could not classify Mend confidence badge for {pr_html_url}")
+        return confidence
+    except Exception as e:
+        _vlog(f"[WARN] Failed to fetch/classify Mend confidence for {pr_html_url}: {e}")
+        return None
+
+def build_jira_description(pr, reason: str, confidence: Optional[str] = None) -> str:
+    parts = [f"Renovate PR: {pr.html_url}", f"Reason detected: {reason}"]
+    if confidence:
+        parts.append(f"Mend confidence: {confidence}")
+    parts.append(f"PR excerpt:\n{(pr.body or '')[:1000]}")
+    return "\n\n".join(parts)
+
+def _merge_mend_confidence_into_description(current_description: str, confidence: Optional[str]) -> Optional[str]:
+    if not confidence:
+        return None
+    current = current_description or ""
+    confidence_line = f"Mend confidence: {confidence}"
+    if re.search(r"(?mi)^Mend confidence:\s*", current):
+        updated = re.sub(r"(?mi)^Mend confidence:\s*.*$", confidence_line, current, count=1)
+        return updated if updated != current else None
+    if "PR excerpt:" in current:
+        updated = current.replace("PR excerpt:", f"{confidence_line}\n\nPR excerpt:", 1)
+        return updated if updated != current else None
+    if "Reason detected:" in current:
+        lines = current.splitlines()
+        for idx, line in enumerate(lines):
+            if line.startswith("Reason detected:"):
+                lines.insert(idx + 1, "")
+                lines.insert(idx + 2, confidence_line)
+                updated = "\n".join(lines)
+                return updated if updated != current else None
+    updated = f"{current.rstrip()}\n\n{confidence_line}" if current.strip() else confidence_line
+    return updated if updated != current else None
+
 def load_repo_config(repo) -> Dict[str, Any]:
     # Defaults apply whenever a repo config omits a key; repo settings override these values.
     defaults = {
@@ -195,6 +303,8 @@ def load_repo_config(repo) -> Dict[str, Any]:
             "fix_components": FIX_TICKET_COMPONENTS,
             "fix_components_even_in_dry_mode": FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE,
             "fix_ticket_pr_links": FIX_TICKET_PR_LINKS,
+            "sync_mend_confidence": SYNC_MEND_CONFIDENCE,
+            "sync_mend_confidence_even_in_dry_mode": SYNC_MEND_CONFIDENCE_EVEN_IN_DRY_MODE,
             "withdraw_duplicate_tickets": JIRA_WITHDRAW_DUPLICATE_TICKETS,
             "withdraw_duplicate_tickets_even_in_dry_mode": JIRA_WITHDRAW_DUPLICATE_TICKETS_EVEN_IN_DRY_MODE,
             "transition_merged_existing_via": "",
@@ -773,7 +883,7 @@ def jira_add_pr_remotelink(issue_key: str, pr_url: str) -> bool:
 def jira_get_issue(issue_key: str, extra_fields_key: str = "") -> Optional[Dict[str, Any]]:
     if issue_key.startswith("DRY-RUN") and not can_mutate_jira():
         return None
-    fields_to_read = ["labels", "fixVersions", "status", "components", JIRA_EPIC_LINK_FIELD, "issuelinks"]
+    fields_to_read = ["labels", "fixVersions", "status", "components", "description", JIRA_EPIC_LINK_FIELD, "issuelinks"]
     if JIRA_RELEASE_APPROACH_FIELD:
         fields_to_read.append(JIRA_RELEASE_APPROACH_FIELD)
     extra_fields = [field_name for field_name in extra_fields_key.split(",") if field_name]
@@ -902,8 +1012,10 @@ def jira_ensure_ticket_fields(
     component: Optional[str] = None,
     release_approach_field: str = "",
     release_approach_value: Any = None,
+    confidence: Optional[str] = None,
     sync_labels_bundle: bool = True,
     sync_component: bool = False,
+    sync_description: bool = False,
     allow_in_dry_run: bool = False,
 ) -> None:
     issue = jira_get_issue(issue_key, release_approach_field if release_approach_field else "")
@@ -937,6 +1049,11 @@ def jira_ensure_ticket_fields(
         current_components = [c.get("name") for c in (fields.get("components") or []) if c.get("name")]
         if component and component not in current_components:
             updates["components"] = [{"name": component}]
+
+    if sync_description:
+        updated_description = _merge_mend_confidence_into_description(fields.get("description") or "", confidence)
+        if updated_description is not None:
+            updates["description"] = updated_description
 
     if updates:
         _vlog(f"[INFO] Updating Jira {issue_key} fields: {sorted(updates.keys())}")
@@ -1198,6 +1315,11 @@ def process_pr(repo, pr, cfg) -> bool:
             FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE,
         )
         fix_ticket_pr_links = _cfg_bool(jira_cfg.get("fix_ticket_pr_links"), FIX_TICKET_PR_LINKS)
+        sync_mend_confidence = _cfg_bool(jira_cfg.get("sync_mend_confidence"), SYNC_MEND_CONFIDENCE)
+        sync_mend_confidence_even_in_dry_mode = _cfg_bool(
+            jira_cfg.get("sync_mend_confidence_even_in_dry_mode"),
+            SYNC_MEND_CONFIDENCE_EVEN_IN_DRY_MODE,
+        )
         withdraw_duplicate_tickets = _cfg_bool(
             jira_cfg.get("withdraw_duplicate_tickets"),
             JIRA_WITHDRAW_DUPLICATE_TICKETS,
@@ -1236,12 +1358,14 @@ def process_pr(repo, pr, cfg) -> bool:
             github_cfg.get("comment_on_existing_jira_if_missing"),
             UPDATE_PR_COMMENT_ON_EXISTING_JIRA_IF_MISSING,
         )
+        sync_ticket_description = sync_mend_confidence
         allow_ticket_updates_in_dry_run = (
             fix_ticket_labels_even_in_dry_mode
             or fix_ticket_components_even_in_dry_mode
+            or sync_mend_confidence_even_in_dry_mode
             or withdraw_duplicate_tickets_even_in_dry_mode
         )
-        can_fix_existing_ticket = fix_ticket_labels or fix_ticket_components or withdraw_duplicate_tickets
+        can_fix_existing_ticket = fix_ticket_labels or fix_ticket_components or withdraw_duplicate_tickets or sync_ticket_description
         is_open_pr = pr.state == "open"
         is_merged_pr = pr.state == "closed" and _pr_is_merged(pr)
         is_closed_unmerged_pr = _pr_is_closed_unmerged(pr)
@@ -1293,7 +1417,8 @@ def process_pr(repo, pr, cfg) -> bool:
             if jira_has_skip_status(existing, skip_statuses):
                 _log(f"[SKIP] PR #{pr.number} in {repo.full_name} has Jira ticket {existing} in skip status")
                 return False
-            if fix_ticket_labels or fix_ticket_components:
+            confidence = fetch_pr_confidence(pr.html_url or "", pr.body or "") if sync_mend_confidence else None
+            if fix_ticket_labels or fix_ticket_components or sync_ticket_description:
                 labels_to_add = cfg.get("jira", {}).get("labels", [])
                 jira_ensure_ticket_fields(
                     existing,
@@ -1302,8 +1427,10 @@ def process_pr(repo, pr, cfg) -> bool:
                     jira_component,
                     jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                     jira_cfg.get("release_approach"),
+                    confidence,
                     sync_labels_bundle=fix_ticket_labels,
                     sync_component=fix_ticket_components,
+                    sync_description=sync_ticket_description,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             if is_merged_pr and transition_merged_existing_path:
@@ -1344,7 +1471,8 @@ def process_pr(repo, pr, cfg) -> bool:
             if jira_has_skip_status(existing, skip_statuses):
                 _log(f"[SKIP] PR #{pr.number} in {repo.full_name} has Jira ticket {existing} in skip status")
                 return False
-            if fix_ticket_labels or fix_ticket_components:
+            confidence = fetch_pr_confidence(pr.html_url or "", pr.body or "") if sync_mend_confidence else None
+            if fix_ticket_labels or fix_ticket_components or sync_ticket_description:
                 labels_to_add = cfg.get("jira", {}).get("labels", [])
                 jira_ensure_ticket_fields(
                     existing,
@@ -1353,8 +1481,10 @@ def process_pr(repo, pr, cfg) -> bool:
                     jira_component,
                     jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                     jira_cfg.get("release_approach"),
+                    confidence,
                     sync_labels_bundle=fix_ticket_labels,
                     sync_component=fix_ticket_components,
+                    sync_description=sync_ticket_description,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             if is_merged_pr and transition_merged_existing_path:
@@ -1393,7 +1523,8 @@ def process_pr(repo, pr, cfg) -> bool:
         jira_preflight(project)
         priority_map = cfg.get("jira", {}).get("priority", {})
         priority = priority_map.get(category, "Medium")
-        description = f"Renovate PR: {pr.html_url}\n\nReason detected: {reason}\n\nPR excerpt:\n{(pr.body or '')[:1000]}"
+        confidence = fetch_pr_confidence(pr.html_url or "", pr.body or "") if sync_mend_confidence else None
+        description = build_jira_description(pr, reason, confidence)
         labels_to_add = cfg.get("jira", {}).get("labels", [])
         jira_cfg = cfg.get("jira", {})
         jira_resp = jira_create_issue(
@@ -1459,12 +1590,19 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
         jira_cfg.get("fix_components_even_in_dry_mode"),
         FIX_TICKET_COMPONENTS_EVEN_IN_DRY_MODE,
     )
+    sync_mend_confidence = _cfg_bool(jira_cfg.get("sync_mend_confidence"), SYNC_MEND_CONFIDENCE)
+    sync_mend_confidence_even_in_dry_mode = _cfg_bool(
+        jira_cfg.get("sync_mend_confidence_even_in_dry_mode"),
+        SYNC_MEND_CONFIDENCE_EVEN_IN_DRY_MODE,
+    )
     skip_statuses = {s.strip().lower() for s in (jira_cfg.get("skip_statuses") or []) if str(s).strip()}
     allow_ticket_updates_in_dry_run = (
         fix_ticket_labels_even_in_dry_mode
         or fix_ticket_components_even_in_dry_mode
+        or sync_mend_confidence_even_in_dry_mode
         or withdraw_duplicate_tickets_even_in_dry_mode
     )
+    sync_ticket_description = sync_mend_confidence
     project = jira_cfg.get("project", DEFAULT_JIRA_PROJECT)
     transition_merged_existing_via = (jira_cfg.get("transition_merged_existing_via") or "").strip()
     transition_merged_existing_path = _cfg_status_path(
@@ -1520,7 +1658,8 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
         if not pr:
             continue
 
-        if fix_ticket_labels or fix_ticket_components:
+        confidence = fetch_pr_confidence(pr.html_url or "", pr.body or "") if sync_mend_confidence else None
+        if fix_ticket_labels or fix_ticket_components or sync_ticket_description:
             jira_ensure_ticket_fields(
                 canonical_issue,
                 jira_cfg.get("labels", []),
@@ -1528,8 +1667,10 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
                 jira_component,
                 jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                 jira_cfg.get("release_approach"),
+                confidence,
                 sync_labels_bundle=fix_ticket_labels,
                 sync_component=fix_ticket_components,
+                sync_description=sync_ticket_description,
                 allow_in_dry_run=allow_ticket_updates_in_dry_run,
             )
 
