@@ -283,6 +283,14 @@ def _merge_mend_confidence_into_description(current_description: str, confidence
     updated = f"{current.rstrip()}\n\n{confidence_line}" if current.strip() else confidence_line
     return updated if updated != current else None
 
+def _mend_confidence_label(confidence: Optional[str], prefix: str) -> Optional[str]:
+    if not confidence or not prefix:
+        return None
+    suffix = re.sub(r"[^a-z0-9]+", "-", confidence.strip().lower()).strip("-")
+    if not suffix:
+        return None
+    return f"{prefix.strip().lower()}-{suffix}"
+
 def load_repo_config(repo) -> Dict[str, Any]:
     # Defaults apply whenever a repo config omits a key; repo settings override these values.
     defaults = {
@@ -305,6 +313,7 @@ def load_repo_config(repo) -> Dict[str, Any]:
             "fix_ticket_pr_links": FIX_TICKET_PR_LINKS,
             "sync_mend_confidence": SYNC_MEND_CONFIDENCE,
             "sync_mend_confidence_even_in_dry_mode": SYNC_MEND_CONFIDENCE_EVEN_IN_DRY_MODE,
+            "mend_confidence_label_prefix": "mend-confidence",
             "withdraw_duplicate_tickets": JIRA_WITHDRAW_DUPLICATE_TICKETS,
             "withdraw_duplicate_tickets_even_in_dry_mode": JIRA_WITHDRAW_DUPLICATE_TICKETS_EVEN_IN_DRY_MODE,
             "transition_merged_existing_via": "",
@@ -1013,9 +1022,11 @@ def jira_ensure_ticket_fields(
     release_approach_field: str = "",
     release_approach_value: Any = None,
     confidence: Optional[str] = None,
+    confidence_label_prefix: str = "",
     sync_labels_bundle: bool = True,
     sync_component: bool = False,
     sync_description: bool = False,
+    sync_confidence_label: bool = False,
     allow_in_dry_run: bool = False,
 ) -> None:
     issue = jira_get_issue(issue_key, release_approach_field if release_approach_field else "")
@@ -1025,8 +1036,9 @@ def jira_ensure_ticket_fields(
     fields = issue.get("fields", {}) or {}
     updates: Dict[str, Any] = {}
 
+    current_labels = set(fields.get("labels") or [])
+
     if sync_labels_bundle:
-        current_labels = set(fields.get("labels") or [])
         desired_labels_set = set(desired_labels or [])
         if desired_labels_set and not desired_labels_set.issubset(current_labels):
             updates["labels"] = sorted(current_labels | desired_labels_set)
@@ -1049,6 +1061,14 @@ def jira_ensure_ticket_fields(
         current_components = [c.get("name") for c in (fields.get("components") or []) if c.get("name")]
         if component and component not in current_components:
             updates["components"] = [{"name": component}]
+
+    if sync_confidence_label and confidence_label_prefix:
+        confidence_label = _mend_confidence_label(confidence, confidence_label_prefix)
+        if confidence_label:
+            retained_labels = {label for label in current_labels if not label.lower().startswith(f"{confidence_label_prefix.strip().lower()}-")}
+            desired_labels_with_confidence = sorted(retained_labels | {confidence_label} | set(desired_labels or []))
+            if set(desired_labels_with_confidence) != current_labels:
+                updates["labels"] = desired_labels_with_confidence
 
     if sync_description:
         updated_description = _merge_mend_confidence_into_description(fields.get("description") or "", confidence)
@@ -1320,6 +1340,7 @@ def process_pr(repo, pr, cfg) -> bool:
             jira_cfg.get("sync_mend_confidence_even_in_dry_mode"),
             SYNC_MEND_CONFIDENCE_EVEN_IN_DRY_MODE,
         )
+        confidence_label_prefix = (jira_cfg.get("mend_confidence_label_prefix") or "mend-confidence").strip()
         withdraw_duplicate_tickets = _cfg_bool(
             jira_cfg.get("withdraw_duplicate_tickets"),
             JIRA_WITHDRAW_DUPLICATE_TICKETS,
@@ -1359,13 +1380,20 @@ def process_pr(repo, pr, cfg) -> bool:
             UPDATE_PR_COMMENT_ON_EXISTING_JIRA_IF_MISSING,
         )
         sync_ticket_description = sync_mend_confidence
+        sync_ticket_confidence_label = sync_mend_confidence
         allow_ticket_updates_in_dry_run = (
             fix_ticket_labels_even_in_dry_mode
             or fix_ticket_components_even_in_dry_mode
             or sync_mend_confidence_even_in_dry_mode
             or withdraw_duplicate_tickets_even_in_dry_mode
         )
-        can_fix_existing_ticket = fix_ticket_labels or fix_ticket_components or withdraw_duplicate_tickets or sync_ticket_description
+        can_fix_existing_ticket = (
+            fix_ticket_labels
+            or fix_ticket_components
+            or withdraw_duplicate_tickets
+            or sync_ticket_description
+            or sync_ticket_confidence_label
+        )
         is_open_pr = pr.state == "open"
         is_merged_pr = pr.state == "closed" and _pr_is_merged(pr)
         is_closed_unmerged_pr = _pr_is_closed_unmerged(pr)
@@ -1428,9 +1456,11 @@ def process_pr(repo, pr, cfg) -> bool:
                     jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                     jira_cfg.get("release_approach"),
                     confidence,
+                    confidence_label_prefix,
                     sync_labels_bundle=fix_ticket_labels,
                     sync_component=fix_ticket_components,
                     sync_description=sync_ticket_description,
+                    sync_confidence_label=sync_ticket_confidence_label,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             if is_merged_pr and transition_merged_existing_path:
@@ -1482,9 +1512,11 @@ def process_pr(repo, pr, cfg) -> bool:
                     jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                     jira_cfg.get("release_approach"),
                     confidence,
+                    confidence_label_prefix,
                     sync_labels_bundle=fix_ticket_labels,
                     sync_component=fix_ticket_components,
                     sync_description=sync_ticket_description,
+                    sync_confidence_label=sync_ticket_confidence_label,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             if is_merged_pr and transition_merged_existing_path:
@@ -1526,6 +1558,9 @@ def process_pr(repo, pr, cfg) -> bool:
         confidence = fetch_pr_confidence(pr.html_url or "", pr.body or "") if sync_mend_confidence else None
         description = build_jira_description(pr, reason, confidence)
         labels_to_add = cfg.get("jira", {}).get("labels", [])
+        confidence_label = _mend_confidence_label(confidence, confidence_label_prefix) if sync_mend_confidence else None
+        if confidence_label and confidence_label not in labels_to_add:
+            labels_to_add = sorted(set(labels_to_add) | {confidence_label})
         jira_cfg = cfg.get("jira", {})
         jira_resp = jira_create_issue(
             summary,
@@ -1595,6 +1630,7 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
         jira_cfg.get("sync_mend_confidence_even_in_dry_mode"),
         SYNC_MEND_CONFIDENCE_EVEN_IN_DRY_MODE,
     )
+    confidence_label_prefix = (jira_cfg.get("mend_confidence_label_prefix") or "mend-confidence").strip()
     skip_statuses = {s.strip().lower() for s in (jira_cfg.get("skip_statuses") or []) if str(s).strip()}
     allow_ticket_updates_in_dry_run = (
         fix_ticket_labels_even_in_dry_mode
@@ -1603,6 +1639,7 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
         or withdraw_duplicate_tickets_even_in_dry_mode
     )
     sync_ticket_description = sync_mend_confidence
+    sync_ticket_confidence_label = sync_mend_confidence
     project = jira_cfg.get("project", DEFAULT_JIRA_PROJECT)
     transition_merged_existing_via = (jira_cfg.get("transition_merged_existing_via") or "").strip()
     transition_merged_existing_path = _cfg_status_path(
@@ -1668,9 +1705,11 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
                 jira_cfg.get("release_approach_field", JIRA_RELEASE_APPROACH_FIELD),
                 jira_cfg.get("release_approach"),
                 confidence,
+                confidence_label_prefix,
                 sync_labels_bundle=fix_ticket_labels,
                 sync_component=fix_ticket_components,
                 sync_description=sync_ticket_description,
+                sync_confidence_label=sync_ticket_confidence_label,
                 allow_in_dry_run=allow_ticket_updates_in_dry_run,
             )
 

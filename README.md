@@ -32,7 +32,7 @@ export JIRA_RELEASE_APPROACH_FIELD=customfield_12345 # Optional: Jira custom fie
 export JIRA_RELEASE_APPROACH_VALUE="Tier 1: CI/CD" # Optional: select value for Release approach
 ```
 
-When `MODE=dry-run`, no new Jira tickets are created unless a specific `*_even_in_dry_mode` behavior is enabled. Most behavior flags now live in repo config, for example `jira.fix_ticket_labels`, `jira.fix_components_even_in_dry_mode`, `jira.sync_mend_confidence`, `jira.sync_mend_confidence_even_in_dry_mode`, `jira.withdraw_duplicate_tickets`, `jira.target_status_path`, and `github.update_pr_title_with_new_jira`.
+When `MODE=dry-run`, no new Jira tickets are created unless a specific `*_even_in_dry_mode` behavior is enabled. Most behavior flags now live in repo config, for example `jira.fix_ticket_labels`, `jira.fix_components_even_in_dry_mode`, `jira.sync_mend_confidence`, `jira.sync_mend_confidence_even_in_dry_mode`, `jira.mend_confidence_label_prefix`, `jira.withdraw_duplicate_tickets`, `jira.target_status_path`, and `github.update_pr_title_with_new_jira`.
 Set `github.mark_jira_live_when_linked_pr_merged: true` to let Jira maintenance transition linked tickets when the linked PR is merged.
 Set `github.mark_jira_withdrawn_when_linked_pr_closed_unmerged: true` to let Jira maintenance transition linked tickets when the linked PR is closed without merging.
 Set `github.list_prs_where_author: true` to prefilter the initial PR list by author before the normal per-PR label checks run. Configure the author with `github.pr_author`.
@@ -103,6 +103,7 @@ jira:
   fix_ticket_pr_links: false
   sync_mend_confidence: true
   sync_mend_confidence_even_in_dry_mode: true
+  mend_confidence_label_prefix: "mend-confidence"
   withdraw_duplicate_tickets: true
   withdraw_duplicate_tickets_even_in_dry_mode: true
   transition_merged_existing_via: "Released to production"
