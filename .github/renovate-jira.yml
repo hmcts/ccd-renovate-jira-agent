@@ -43,7 +43,7 @@ jira:
   transition_closed_unmerged_existing_via: "Withdrawn"
   target_status: "Resume Development"
   target_status_path: ["Blocked", "Resume Development"]
-  skip_statuses: ["Resume Development", "Resume QA", "Resume Release"]
+  skip_statuses: ["Done", "Live"]
   release_approach_field: "customfield_33400"
   release_approach: "Tier 1: CI/CD"
   priority:
