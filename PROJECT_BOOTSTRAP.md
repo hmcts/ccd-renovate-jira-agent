@@ -118,6 +118,7 @@ github:
 jira:
   project: "CCD"
   labels: ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"]
+  existing_ticket_required_labels: ["RENOVATE-PR"]
   priority:
     security: "High"
     major: "Medium"

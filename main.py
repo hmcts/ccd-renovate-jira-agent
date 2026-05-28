@@ -303,6 +303,7 @@ def load_repo_config(repo) -> Dict[str, Any]:
             "project": DEFAULT_JIRA_PROJECT,
             "priority": {"security": "High", "major": "Medium", "critical-dep": "High"},
             "labels": ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"],
+            "existing_ticket_required_labels": ["RENOVATE-PR"],
             "release_approach_field": JIRA_RELEASE_APPROACH_FIELD,
             "release_approach": JIRA_RELEASE_APPROACH_VALUE,
             "create_pr_links": CREATE_PR_LINKS,
@@ -586,6 +587,15 @@ def _jira_issue_sort_key(issue_key: str) -> Any:
 
 def _required_issue_labels(required_labels: List[str]) -> List[str]:
     return sorted({label.strip() for label in (required_labels or []) if label and label.strip()})
+
+def jira_existing_ticket_required_labels(jira_cfg: Dict[str, Any]) -> List[str]:
+    configured = jira_cfg.get("existing_ticket_required_labels")
+    if configured is None:
+        # Backward compatibility for an older/internal name if present.
+        configured = jira_cfg.get("required_existing_labels")
+    if configured is None:
+        configured = ["RENOVATE-PR"]
+    return _required_issue_labels(configured)
 
 def _issue_has_required_labels(issue: Dict[str, Any], required_labels: List[str]) -> bool:
     wanted = set(_required_issue_labels(required_labels))
@@ -1419,7 +1429,7 @@ def process_pr(repo, pr, cfg) -> bool:
             _vlog(f"[INFO] PR #{pr.number} in {repo.full_name} missing required labels but continuing existing-ticket fix path for state={pr.state}")
         category = None
         reason = "Jira key already referenced on PR"
-        required_existing_labels = cfg.get("jira", {}).get("labels", [])
+        required_existing_labels = jira_existing_ticket_required_labels(jira_cfg)
         existing = pr_find_referenced_ticket(pr, required_existing_labels)
         project = cfg.get("jira", {}).get("project", DEFAULT_JIRA_PROJECT)
         if existing and withdraw_duplicate_tickets:
@@ -1606,7 +1616,7 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
     if not include_merged and not include_closed_unmerged:
         return
 
-    required_existing_labels = jira_cfg.get("labels", [])
+    required_existing_labels = jira_existing_ticket_required_labels(jira_cfg)
     fix_ticket_labels = _cfg_bool(jira_cfg.get("fix_ticket_labels"), FIX_TICKET_LABELS)
     fix_ticket_labels_even_in_dry_mode = _cfg_bool(
         jira_cfg.get("fix_ticket_labels_even_in_dry_mode"),

@@ -95,6 +95,7 @@ github:
 jira:
   project: "CCD"
   labels: ["CCD-BAU", "RENOVATE-PR", "GENERATED-BY-Agent"]
+  existing_ticket_required_labels: ["RENOVATE-PR"]
   create_pr_links: true
   fix_ticket_labels: true
   fix_ticket_labels_even_in_dry_mode: true
