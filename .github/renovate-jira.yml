@@ -36,8 +36,8 @@ jira:
   sync_mend_confidence: true
   sync_mend_confidence_even_in_dry_mode: true
   mend_confidence_label_prefix: "mend-confidence"
-  withdraw_duplicate_tickets: true
-  withdraw_duplicate_tickets_even_in_dry_mode: true
+  withdraw_duplicate_tickets: false
+  withdraw_duplicate_tickets_even_in_dry_mode: false
   transition_merged_existing_via: "Released to production"
   transition_merged_existing_path: ["Blocked", "Resume Release", "Released to production"]
   transition_closed_unmerged_existing_via: "Withdrawn"
