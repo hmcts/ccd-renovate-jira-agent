@@ -3,13 +3,14 @@ name: Renovate -> Jira automation
 on:
   schedule:
     # 0 = minute 0
-    # 16 = 4 PM (24-hour clock)
+    # 7 = 7 AM (24-hour clock)
     # * = every day of the month
     # * = every month
     # 1-5 = Monday through Friday
-    # This will run at 16:00 (4:00 PM) every weekday.
+    # This will run at 07:00 (7:00 AM) every weekday.
     
-    - cron: "0 16 * * 1-5"
+    - cron: "0 7 * * 1-5"
+
   workflow_dispatch:
 
 env:
