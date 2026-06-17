@@ -2,7 +2,14 @@ name: Renovate -> Jira automation
 
 on:
   schedule:
-    - cron: "0 2 * * *"
+    # 0 = minute 0
+    # 16 = 4 PM (24-hour clock)
+    # * = every day of the month
+    # * = every month
+    # 1-5 = Monday through Friday
+    # This will run at 16:00 (4:00 PM) every weekday.
+    
+    - cron: "0 16 * * 1-5"
   workflow_dispatch:
 
 env:
@@ -22,7 +29,7 @@ jobs:
   run-agent:
     # Scheduled runs are disabled because the condition is false for the schedule event.
     # Set `false` to `true` to allow schedule triggers.
-    if: ${{ github.event_name != 'schedule' || false }}
+    if: ${{ github.event_name != 'schedule' || true }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
