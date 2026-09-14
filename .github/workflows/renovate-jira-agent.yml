@@ -30,7 +30,7 @@ jobs:
   run-agent:
     # Scheduled runs are disabled because the condition is false for the schedule event.
     # Set `false` to `true` to allow schedule triggers.
-    if: ${{ github.event_name != 'schedule' || true }}
+    if: ${{ github.event_name != 'schedule' || false }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
