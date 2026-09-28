@@ -25,6 +25,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 logger = logging.getLogger("renovate-jira-agent")
 
 LOG_PREFIX = ""
+_JIRA_LEGACY_SEARCH = False
 
 def _log(message: str) -> None:
     print(f"{LOG_PREFIX}{message}")
@@ -52,7 +53,6 @@ JIRA_PAT = os.getenv("JIRA_PAT")
 JIRA_API_VERSION = os.getenv("JIRA_API_VERSION", "2")
 DEFAULT_JIRA_PROJECT = os.getenv("JIRA_PROJECT_KEY", "CCD")
 JIRA_FIX_VERSION = os.getenv("JIRA_FIX_VERSION", "CCD CI/CD Release")
-JIRA_EPIC_LINK_FIELD = os.getenv("JIRA_EPIC_LINK_FIELD", "customfield_10008")
 JIRA_EPIC_KEY = os.getenv("JIRA_EPIC_KEY", "CCD-7071")
 JIRA_RELEASE_APPROACH_FIELD = os.getenv("JIRA_RELEASE_APPROACH_FIELD", "")
 JIRA_RELEASE_APPROACH_VALUE = os.getenv("JIRA_RELEASE_APPROACH_VALUE", "Tier 1: CI/CD")
@@ -77,18 +77,25 @@ JIRA_TARGET_STATUS = os.getenv("JIRA_TARGET_STATUS", "")
 JIRA_TARGET_STATUS_PATH = [s.strip() for s in os.getenv("JIRA_TARGET_STATUS_PATH", "").split(",") if s.strip()]
 JIRA_SKIP_STATUSES = {s.strip().lower() for s in os.getenv("JIRA_SKIP_STATUSES", "Resume Development,Resume QA,Resume Release").split(",") if s.strip()}
 
-def _parse_optional_pr_number(raw: str) -> int:
+def _parse_optional_pr_target(raw: str) -> tuple[str, int]:
     value = (raw or "").strip()
     if not value:
-        return 0
+        return "", 0
     if value.isdigit():
-        return int(value)
-    match = re.search(r"/pull/(\d+)", value)
+        return "", int(value)
+    match = re.fullmatch(
+        r"https://github\.com/([^/]+/[^/]+)/pull/(\d+)(?:[/?#].*)?",
+        value,
+        re.IGNORECASE,
+    )
     if match:
-        return int(match.group(1))
-    raise ValueError(f"Invalid TEST_PR_NUMBER value: {value!r}. Use PR number (e.g. 600) or PR URL.")
+        return match.group(1), int(match.group(2))
+    raise ValueError(
+        f"Invalid TEST_PR_NUMBER value: {value!r}. "
+        "Use a PR number or full GitHub PR URL."
+    )
 
-TEST_PR_NUMBER = _parse_optional_pr_number(os.getenv("TEST_PR_NUMBER", "0"))
+TEST_PR_REPO, TEST_PR_NUMBER = _parse_optional_pr_target(os.getenv("TEST_PR_NUMBER", "0"))
 MAX_NEW_JIRA_TICKETS = int(os.getenv("MAX_NEW_JIRA_TICKETS", "0") or "0")
 PR_PROCESS_DELAY_SECONDS = float(os.getenv("PR_PROCESS_DELAY_SECONDS", "0") or "0")
 LOG_TIMINGS = os.getenv("LOG_TIMINGS", "").lower() in {"1", "true", "yes", "on"}
@@ -375,6 +382,13 @@ def load_repo_config(repo) -> Dict[str, Any]:
         return defaults
 
 def get_target_repos(gh_client) -> Iterable:
+    if TEST_PR_REPO:
+        if GITHUB_REPO and GITHUB_REPO.lower() != TEST_PR_REPO.lower():
+            raise RuntimeError(
+                f"TEST_PR_NUMBER targets {TEST_PR_REPO}, but GITHUB_REPO is {GITHUB_REPO}"
+            )
+        print(f"[STARTUP] Loading test PR target repo {TEST_PR_REPO}")
+        return [gh_client.get_repo(TEST_PR_REPO)]
     if GITHUB_REPO:
         print(f"[STARTUP] Loading target repo {GITHUB_REPO}")
         return [gh_client.get_repo(GITHUB_REPO)]
@@ -457,6 +471,18 @@ def _jira_single_select_matches(current_value: Any, desired_value: Dict[str, Any
             return False
     return True
 
+def _jira_parent_value(issue_key: str) -> Optional[Dict[str, str]]:
+    issue_key = (issue_key or "").strip()
+    if not issue_key:
+        return None
+    return {"key": issue_key}
+
+def _jira_parent_key(fields: Dict[str, Any]) -> str:
+    parent = (fields or {}).get("parent") or {}
+    if not isinstance(parent, dict):
+        return ""
+    return (parent.get("key") or "").strip()
+
 def jira_create_issue(
     summary: str,
     description: str,
@@ -476,9 +502,11 @@ def jira_create_issue(
             "labels": labels,
             "priority": {"name": priority},
             "fixVersions": [{"name": JIRA_FIX_VERSION}],
-            JIRA_EPIC_LINK_FIELD: JIRA_EPIC_KEY,
         }
     }
+    parent = _jira_parent_value(JIRA_EPIC_KEY)
+    if parent:
+        payload["fields"]["parent"] = parent
     if component:
         payload["fields"]["components"] = [{"name": component}]
     release_approach = _jira_single_select_value(release_approach_value)
@@ -516,11 +544,66 @@ def jira_preflight(project: str) -> None:
 def _escape_jql(text: str) -> str:
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
-def _jql_field_ref(field_name: str) -> str:
-    match = re.fullmatch(r"customfield_(\d+)", field_name or "")
-    if match:
-        return f"cf[{match.group(1)}]"
-    return f'"{_escape_jql(field_name)}"'
+def _jira_search_fields(fields: str) -> List[str]:
+    return [field for field in (f.strip() for f in (fields or "").split(",")) if field and field != "key"]
+
+def _jira_search_enhanced(
+    jql: str,
+    fields: str,
+    max_results: int,
+    auth=None,
+    headers: Optional[Dict[str, str]] = None,
+    next_page_token: str = "",
+) -> Optional[Dict[str, Any]]:
+    global _JIRA_LEGACY_SEARCH
+    if _JIRA_LEGACY_SEARCH:
+        return None
+
+    payload = {
+        "jql": jql,
+        "maxResults": max_results,
+        "fields": _jira_search_fields(fields),
+    }
+    if next_page_token:
+        payload["nextPageToken"] = next_page_token
+
+    resp = _jira_request(
+        "POST",
+        f"/rest/api/{JIRA_API_VERSION}/search/jql",
+        headers=headers or {},
+        auth=auth,
+        json=payload,
+    )
+    if resp.status_code in {404, 405, 410}:
+        _JIRA_LEGACY_SEARCH = True
+        _vlog("[INFO] Jira enhanced JQL search unavailable; falling back to legacy /search")
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+def _jira_search_legacy(
+    jql: str,
+    fields: str,
+    max_results: int,
+    auth=None,
+    headers: Optional[Dict[str, str]] = None,
+    start_at: int = 0,
+) -> Dict[str, Any]:
+    params = {
+        "jql": jql,
+        "startAt": start_at,
+        "maxResults": max_results,
+        "fields": ",".join(_jira_search_fields(fields)),
+    }
+    resp = _jira_request(
+        "GET",
+        f"/rest/api/{JIRA_API_VERSION}/search",
+        headers=headers or {},
+        auth=auth,
+        params=params,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 def _pr_slug(pr_url: str) -> str:
     m = re.search(r"github\\.com/([^/]+/[^/]+/pull/\\d+)", pr_url or "")
@@ -573,10 +656,10 @@ def _build_summary_token_jql(project: str, text: str) -> Optional[str]:
     )
 
 def _jira_search_issues(project: str, jql: str, auth, headers, max_results: int = 5) -> List[Dict[str, Any]]:
-    params = {"jql": jql, "maxResults": max_results, "fields": "key,summary,description,labels"}
-    resp = _jira_request("GET", f"/rest/api/{JIRA_API_VERSION}/search", headers=headers, auth=auth, params=params)
-    resp.raise_for_status()
-    data = resp.json()
+    fields = "key,summary,description,labels"
+    data = _jira_search_enhanced(jql, fields, max_results, auth=auth, headers=headers)
+    if data is None:
+        data = _jira_search_legacy(jql, fields, max_results, auth=auth, headers=headers)
     return data.get("issues", [])
 
 def _jira_issue_sort_key(issue_key: str) -> Any:
@@ -902,7 +985,7 @@ def jira_add_pr_remotelink(issue_key: str, pr_url: str) -> bool:
 def jira_get_issue(issue_key: str, extra_fields_key: str = "") -> Optional[Dict[str, Any]]:
     if issue_key.startswith("DRY-RUN") and not can_mutate_jira():
         return None
-    fields_to_read = ["labels", "fixVersions", "status", "components", "description", JIRA_EPIC_LINK_FIELD, "issuelinks"]
+    fields_to_read = ["labels", "fixVersions", "status", "components", "description", "parent", "issuelinks"]
     if JIRA_RELEASE_APPROACH_FIELD:
         fields_to_read.append(JIRA_RELEASE_APPROACH_FIELD)
     extra_fields = [field_name for field_name in extra_fields_key.split(",") if field_name]
@@ -960,14 +1043,14 @@ def jira_update_issue(issue_key: str, fields: Dict[str, Any], allow_in_dry_run: 
 def jira_transition_issue(issue_key: str, status_name: str, allow_in_dry_run: bool = False) -> bool:
     if not status_name:
         return False
+    if MODE == "dry-run" and not allow_in_dry_run:
+        _log(f"[DRY-RUN] Would transition Jira {issue_key} to status {status_name}")
+        return True
     if issue_key.startswith("DRY-RUN"):
         return False
     current_status = jira_get_status_name(issue_key)
     if current_status and current_status.lower() == status_name.lower():
         _vlog(f"[INFO] Jira {issue_key} already in status {current_status}")
-        return True
-    if MODE == "dry-run" and not allow_in_dry_run:
-        _log(f"[DRY-RUN] Would transition Jira {issue_key} to status {status_name}")
         return True
     if MODE == "dry-run" and allow_in_dry_run:
         _log(f"[INFO] Transitioning Jira {issue_key} to status {status_name} during dry-run override")
@@ -1003,6 +1086,10 @@ def jira_transition_issue(issue_key: str, status_name: str, allow_in_dry_run: bo
 def jira_transition_issue_path(issue_key: str, statuses: List[str], allow_in_dry_run: bool = False) -> bool:
     if not statuses:
         return False
+    if MODE == "dry-run" and not allow_in_dry_run:
+        for status in statuses:
+            _log(f"[DRY-RUN] Would transition Jira {issue_key} to status {status}")
+        return True
     if issue_key.startswith("DRY-RUN"):
         return False
     original_status = jira_get_status_name(issue_key)
@@ -1023,6 +1110,33 @@ def jira_transition_issue_path(issue_key: str, statuses: List[str], allow_in_dry
                         _log(f"[WARN] Rollback failed for Jira {issue_key}; current status is {jira_get_status_name(issue_key) or 'unknown'}")
             return False
     return True
+
+def require_jira_transition(
+    issue_key: str,
+    transition: Any,
+    allow_in_dry_run: bool = False,
+) -> None:
+    if isinstance(transition, list):
+        succeeded = jira_transition_issue_path(
+            issue_key,
+            transition,
+            allow_in_dry_run=allow_in_dry_run,
+        )
+        requested = " -> ".join(transition)
+    else:
+        succeeded = jira_transition_issue(
+            issue_key,
+            str(transition),
+            allow_in_dry_run=allow_in_dry_run,
+        )
+        requested = str(transition)
+    if succeeded:
+        return
+    current_status = jira_get_status_name(issue_key) or "unknown"
+    raise RuntimeError(
+        f"Required Jira transition failed for {issue_key}: {requested} "
+        f"(current status: {current_status})"
+    )
 
 def jira_ensure_ticket_fields(
     issue_key: str,
@@ -1057,9 +1171,9 @@ def jira_ensure_ticket_fields(
         if fix_version and fix_version not in current_fix_versions:
             updates["fixVersions"] = [{"name": name} for name in (current_fix_versions + [fix_version])]
 
-        current_epic = fields.get(JIRA_EPIC_LINK_FIELD)
-        if JIRA_EPIC_KEY and current_epic != JIRA_EPIC_KEY:
-            updates[JIRA_EPIC_LINK_FIELD] = JIRA_EPIC_KEY
+        parent = _jira_parent_value(JIRA_EPIC_KEY)
+        if parent and _jira_parent_key(fields) != JIRA_EPIC_KEY:
+            updates["parent"] = parent
 
         desired_release_approach = _jira_single_select_value(release_approach_value)
         if release_approach_field and desired_release_approach:
@@ -1244,17 +1358,26 @@ def github_get_pr_by_url(pr_url: str):
 
 def jira_search_issues_all(jql: str, fields: str, max_results: int = 50) -> List[Dict[str, Any]]:
     issues: List[Dict[str, Any]] = []
+    next_page_token = ""
+    while not _JIRA_LEGACY_SEARCH:
+        data = _jira_search_enhanced(
+            jql,
+            fields,
+            max_results,
+            next_page_token=next_page_token,
+        )
+        if data is None:
+            break
+        batch = data.get("issues", []) or []
+        issues.extend(batch)
+        next_page_token = data.get("nextPageToken", "")
+        if not next_page_token or not batch:
+            return issues
+
+    issues = []
     start_at = 0
     while True:
-        params = {
-            "jql": jql,
-            "startAt": start_at,
-            "maxResults": max_results,
-            "fields": fields,
-        }
-        resp = _jira_request("GET", f"/rest/api/{JIRA_API_VERSION}/search", params=params)
-        resp.raise_for_status()
-        data = resp.json()
+        data = _jira_search_legacy(jql, fields, max_results, start_at=start_at)
         batch = data.get("issues", []) or []
         issues.extend(batch)
         if start_at + len(batch) >= data.get("total", 0) or not batch:
@@ -1266,7 +1389,7 @@ def jira_list_epic_child_issues(project: str, required_labels: List[str]) -> Lis
     project_key = _escape_jql(project)
     jql = (
         f'project = "{project_key}" '
-        f'AND {_jql_field_ref(JIRA_EPIC_LINK_FIELD)} = "{epic_key}" '
+        f'AND parent = "{epic_key}" '
         f'AND status != "Withdrawn"'
     )
     jql = _jql_with_required_issue_labels(jql, required_labels)
@@ -1293,8 +1416,7 @@ def get_target_pr_groups(repo, cfg):
         print(f"[PRS] Loading TEST_PR_NUMBER={TEST_PR_NUMBER} in {repo.full_name}")
         try:
             pr = repo.get_pull(TEST_PR_NUMBER)
-            if pr.state == "open":
-                open_prs.append(pr)
+            open_prs.append(pr)
         except Exception as e:
             _vlog(f"[WARN] Failed to load TEST_PR_NUMBER={TEST_PR_NUMBER} in {repo.full_name}: {e}")
         return open_prs
@@ -1474,19 +1596,19 @@ def process_pr(repo, pr, cfg) -> bool:
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             if is_merged_pr and transition_merged_existing_path:
-                jira_transition_issue_path(
+                require_jira_transition(
                     existing,
                     transition_merged_existing_path,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             elif is_merged_pr and transition_merged_existing_via:
-                jira_transition_issue(
+                require_jira_transition(
                     existing,
                     transition_merged_existing_via,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             elif is_closed_unmerged_pr and transition_closed_unmerged_existing_via:
-                jira_transition_issue(
+                require_jira_transition(
                     existing,
                     transition_closed_unmerged_existing_via,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
@@ -1530,19 +1652,19 @@ def process_pr(repo, pr, cfg) -> bool:
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             if is_merged_pr and transition_merged_existing_path:
-                jira_transition_issue_path(
+                require_jira_transition(
                     existing,
                     transition_merged_existing_path,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             elif is_merged_pr and transition_merged_existing_via:
-                jira_transition_issue(
+                require_jira_transition(
                     existing,
                     transition_merged_existing_via,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             elif is_closed_unmerged_pr and transition_closed_unmerged_existing_via:
-                jira_transition_issue(
+                require_jira_transition(
                     existing,
                     transition_closed_unmerged_existing_via,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
@@ -1587,9 +1709,9 @@ def process_pr(repo, pr, cfg) -> bool:
             jira_add_pr_remotelink(issue_key, pr.html_url)
         maybe_update_pr_title_with_jira(pr, issue_key, repo.full_name, enabled=update_pr_title_with_jira)
         if target_status_path:
-            jira_transition_issue_path(issue_key, target_status_path)
+            require_jira_transition(issue_key, target_status_path)
         elif target_status:
-            jira_transition_issue(issue_key, target_status)
+            require_jira_transition(issue_key, target_status)
         comment = f"Created Jira issue {issue_key} to track this Renovate PR. Reason: {reason}"
         if MODE != "dry-run":
             if github_cfg.get("comment", True):
@@ -1725,20 +1847,20 @@ def maintain_repo_jira_tickets(repo, cfg) -> None:
 
         if _pr_is_merged(pr):
             if include_merged and transition_merged_existing_path:
-                jira_transition_issue_path(
+                require_jira_transition(
                     canonical_issue,
                     transition_merged_existing_path,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
             elif include_merged and transition_merged_existing_via:
-                jira_transition_issue(
+                require_jira_transition(
                     canonical_issue,
                     transition_merged_existing_via,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
                 )
         elif _pr_is_closed_unmerged(pr):
             if include_closed_unmerged and transition_closed_unmerged_existing_via:
-                jira_transition_issue(
+                require_jira_transition(
                     canonical_issue,
                     transition_closed_unmerged_existing_via,
                     allow_in_dry_run=allow_ticket_updates_in_dry_run,
@@ -1774,10 +1896,16 @@ def main():
                         time.sleep(repo_pr_delay_seconds)
                 except Exception as e:
                     print(f"Error processing PR #{getattr(pr,'number','?')} in {repo.full_name}: {e}", file=sys.stderr)
+                    if TEST_PR_NUMBER:
+                        raise
             return False
 
         if _process_repo_prs(open_prs, "open PR phase"):
             return
+        if TEST_PR_NUMBER:
+            _vlog(f"[INFO] Skipping repository-wide Jira maintenance for targeted PR #{TEST_PR_NUMBER}")
+            _timed(f"repo {repo.full_name}", repo_started)
+            continue
         maintain_repo_jira_tickets(repo, cfg)
         _timed(f"repo {repo.full_name}", repo_started)
     _timed("total run", run_started)

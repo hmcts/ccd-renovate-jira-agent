@@ -12,12 +12,24 @@ on:
     - cron: "0 7 * * 1-5"
 
   workflow_dispatch:
+    inputs:
+      target_pr_url:
+        description: "Full GitHub PR URL to process (exactly one PR)"
+        required: true
+        type: string
+      mode:
+        description: "Use dry-run first, then run for the live Jira Cloud smoke test"
+        required: true
+        default: "dry-run"
+        type: choice
+        options:
+          - dry-run
+          - run
 
 env:
-  JIRA_BASE_URL: "https://tools.hmcts.net/jira"
+  JIRA_BASE_URL: "https://hmcts.atlassian.net"
   JIRA_PROJECT_KEY: "CCD"
   JIRA_EPIC_KEY: "CCD-7071"
-  JIRA_EPIC_LINK_FIELD: "customfield_10008"
   JIRA_FIX_VERSION: "CCD CI/CD Release"
   JIRA_RELEASE_APPROACH_VALUE: "Tier 1: CI/CD"
 
@@ -59,25 +71,24 @@ jobs:
 
           JIRA_BASE_URL: ${{ env.JIRA_BASE_URL }}
           
-          #JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
-          #JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
 
-          #If using PAT authentication, use JIRA_PAT instead of the above two variables
-          JIRA_PAT: ${{ secrets.JIRA_PAT }}
+          # If using PAT authentication for Jira/Data Center, use JIRA_PAT instead of the above two variables
+          #JIRA_PAT: ${{ secrets.JIRA_PAT }}
           
           JIRA_PROJECT_KEY: ${{ env.JIRA_PROJECT_KEY }}
           JIRA_EPIC_KEY: ${{ env.JIRA_EPIC_KEY }}
-          JIRA_EPIC_LINK_FIELD: ${{ env.JIRA_EPIC_LINK_FIELD }}
           JIRA_FIX_VERSION: ${{ env.JIRA_FIX_VERSION }}
           JIRA_RELEASE_APPROACH_VALUE: ${{ env.JIRA_RELEASE_APPROACH_VALUE }}
           JIRA_API_VERSION: "2"
 
-          MODE: "run" # Set to "run" to create Jira tickets, "dry-run" for testing only
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'run' }}
           VERBOSE: "1" # If MODE=run, set to "0" to reduce log verbosity. If MODE=dry-run, set to "1" for log verbosity
 
-          # if testing only, grab only one renovate PR to process, create only one Jira ticket to confirm logic is correct
-          #TEST_PR_NUMBER: "https://github.com/hmcts/ccd-data-store-api/pull/2801" # Optional: process only this PR number
-          #MAX_NEW_JIRA_TICKETS: "1" # Optional: stop after creating this many new Jira tickets, good for testing
+          # Manual dispatches are deliberately constrained to one exact PR and at most one new Jira ticket.
+          TEST_PR_NUMBER: ${{ inputs.target_pr_url }}
+          MAX_NEW_JIRA_TICKETS: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
 
           VERBOSE_JIRA_DEDUPE: "false" # Set to "true" for extra Jira dedupe diagnostics (will log all Jira tickets considered for deduplication and why they were or were not considered a match)
           
