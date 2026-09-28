@@ -14,23 +14,24 @@ python -m pip install -r requirements.txt
 ```bash
 export MODE=dry-run # or run
 export REPO_LIST_FILE=./repo-list.txt
-export TEST_PR_NUMBER=1234 # Optional: process only this PR number
+export TEST_PR_NUMBER=https://github.com/hmcts/your-repo/pull/1234 # Optional: process exactly this PR
 export MAX_NEW_JIRA_TICKETS=1 # Optional: stop after creating this many new Jira tickets
 export PR_PROCESS_DELAY_SECONDS=0 # Optional: delay between PRs; increase only if you hit rate limits
 export GITHUB_TOKEN=<YOUR-GITHUB-FINE-GRAINED-TOKEN>
-export JIRA_BASE_URL=https://tools.hmcts.net/jira
+export JIRA_BASE_URL=https://hmcts.atlassian.net
 
-#export JIRA_USER_EMAIL=<YOUR_JIRA_LOGIN_EMAIL_ADDRESS>
-
-#If using PAT authentication, use JIRA_PAT instead of the above two variables
-export JIRA_PAT=<YOUR_JIRA_PAT>
+export JIRA_USER_EMAIL=<YOUR_JIRA_LOGIN_EMAIL_ADDRESS>
+export JIRA_API_TOKEN=<YOUR_JIRA_CLOUD_API_TOKEN>
 
 export JIRA_API_VERSION=2
+export JIRA_EPIC_KEY=CCD-7071 # Optional: parent epic for created/maintained tickets
 export VERBOSE_JIRA_DEDUPE=false # Optional: extra diagnostics for Jira dedupe
 export LOG_TIMINGS=true # Optional: log per-PR, per-repo, and total runtime timings
 export JIRA_RELEASE_APPROACH_FIELD=customfield_12345 # Optional: Jira custom field id for "Release approach"
 export JIRA_RELEASE_APPROACH_VALUE="Tier 1: CI/CD" # Optional: select value for Release approach
 ```
+
+For Jira Cloud, use `JIRA_USER_EMAIL` plus `JIRA_API_TOKEN`. Bearer-token auth via `JIRA_PAT` remains supported for older Jira/Data Center-style deployments.
 
 When `MODE=dry-run`, no new Jira tickets are created unless a specific `*_even_in_dry_mode` behavior is enabled. Most behavior flags now live in repo config, for example `jira.fix_ticket_labels`, `jira.fix_components_even_in_dry_mode`, `jira.sync_mend_confidence`, `jira.sync_mend_confidence_even_in_dry_mode`, `jira.mend_confidence_label_prefix`, `jira.withdraw_duplicate_tickets`, `jira.target_status_path`, and `github.update_pr_title_with_new_jira`.
 Set `github.mark_jira_live_when_linked_pr_merged: true` to let Jira maintenance transition linked tickets when the linked PR is merged.
@@ -38,12 +39,12 @@ Set `github.mark_jira_withdrawn_when_linked_pr_closed_unmerged: true` to let Jir
 Set `github.list_prs_where_author: true` to prefilter the initial PR list by author before the normal per-PR label checks run. Configure the author with `github.pr_author`.
 Set top-level `pr_process_delay_seconds` in `.github/renovate-jira.yml` to override the global `PR_PROCESS_DELAY_SECONDS` env var for a specific repo.
 
-## Quick validation of JIRA PAT
+## Quick validation of Jira Cloud API token
 
 ```bash
-curl -H "Authorization: Bearer $JIRA_PAT" \
+curl -u "$JIRA_USER_EMAIL:$JIRA_API_TOKEN" \
   -H "Accept: application/json" \
-  https://tools.hmcts.net/jira/rest/api/2/myself
+  "$JIRA_BASE_URL/rest/api/2/myself"
 ```
 
 ## run locally
@@ -53,13 +54,24 @@ LOCAL_CONFIG_PATH=.github/renovate-jira.yml VERBOSE=1 python main.py
 
 Single-ticket test run example:
 ```bash
-MODE=run GITHUB_REPO=hmcts/your-repo TEST_PR_NUMBER=1234 MAX_NEW_JIRA_TICKETS=1 VERBOSE=1 python main.py
+MODE=run TEST_PR_NUMBER=https://github.com/hmcts/your-repo/pull/1234 MAX_NEW_JIRA_TICKETS=1 VERBOSE=1 python main.py
 ```
 
 Existing-ticket component-only test example:
 ```bash
 MODE=run GITHUB_REPO=hmcts/ccd-case-document-am-api TEST_PR_NUMBER=1234 MAX_NEW_JIRA_TICKETS=0 VERBOSE=1 python main.py
 ```
+
+## Jira Cloud smoke test
+
+Use one PR that is safe to merge and has a required Renovate label. Its title or body must also match an enabled rule, such as containing `migration` for the major-update rule.
+
+1. Dispatch `Renovate -> Jira automation` with the full PR URL and `mode=dry-run`. Confirm the log names only that repository and PR and shows the expected transition path.
+2. Dispatch the same PR with `mode=run`. Confirm exactly one Jira ticket is created under the configured parent, has a GitHub remote link, and finishes in `Resume Development` after `Blocked -> Resume Development`.
+3. Dispatch it again while open. Confirm the existing ticket is found and no second ticket is created.
+4. Merge the PR, then dispatch the same URL with `mode=run`. Confirm the same ticket follows `Blocked -> Resume Release -> Released to production` and finishes in `Released to production`.
+
+A targeted dispatch processes the selected PR even after it closes and skips repository-wide Jira maintenance. Any required transition failure fails the workflow.
 
 ## Per-Repo Configuration
 
