@@ -30,22 +30,23 @@ jira:
   existing_ticket_required_labels: ["RENOVATE-PR"]
   create_pr_links: true
   fix_ticket_labels: true
-  fix_ticket_labels_even_in_dry_mode: true
+  fix_ticket_labels_even_in_dry_mode: false
   fix_components: true
-  fix_components_even_in_dry_mode: true
+  fix_components_even_in_dry_mode: false
   fix_ticket_pr_links: false
   sync_mend_confidence: true
-  sync_mend_confidence_even_in_dry_mode: true
+  sync_mend_confidence_even_in_dry_mode: false
   mend_confidence_label_prefix: "mend-confidence"
   withdraw_duplicate_tickets: false
   withdraw_duplicate_tickets_even_in_dry_mode: false
   transition_merged_existing_via: "Released to production"
-  transition_merged_existing_path: ["Blocked", "Resume Release", "Released to production"]
+  transition_merged_existing_path: ["Blocked", "Releasable", "Released to production"]
   transition_closed_unmerged_existing_via: "Withdrawn"
-  target_status: "Resume Development"
-  target_status_path: ["Blocked", "Resume Development"]
+  target_status: "To Do"
+  target_status_path: ["Blocked", "To Do"]
   skip_statuses: ["Done", "Live"]
-  release_approach_field: "customfield_33400"
+  # Disabled: Jira Cloud rejects the previous field id on the Task create screen.
+  release_approach_field: ""
   release_approach: "Tier 1: CI/CD"
   priority:
     security: "2-High"

@@ -70,6 +70,10 @@ jobs:
           REPO_LIST_FILE: ./repo-list.txt
 
           JIRA_BASE_URL: ${{ env.JIRA_BASE_URL }}
+          # Repository variable: cookie temporarily, token when the API token is ready.
+          JIRA_AUTH_MODE: ${{ vars.JIRA_AUTH_MODE || 'auto' }}
+          JIRA_API_BASE_URL: ${{ vars.JIRA_API_BASE_URL || env.JIRA_BASE_URL }}
+          JIRA_SESSION_COOKIE: ${{ secrets.JIRA_SESSION_COOKIE }}
           
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}

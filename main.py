@@ -12,11 +12,12 @@ import re
 import colorsys
 import base64
 from io import BytesIO
+from urllib.parse import urlsplit
 import yaml
 from functools import lru_cache
 from typing import Iterable, Dict, Any, List, Optional
 import requests
-from requests.auth import HTTPBasicAuth
+from requests.auth import AuthBase, HTTPBasicAuth
 from github import Github, Auth
 from PIL import Image
 from decision import needs_jira
@@ -50,6 +51,10 @@ JIRA_BASE_URL = os.getenv("JIRA_BASE_URL")
 JIRA_USER_EMAIL = os.getenv("JIRA_USER_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 JIRA_PAT = os.getenv("JIRA_PAT")
+JIRA_AUTH_MODE = (os.getenv("JIRA_AUTH_MODE") or "auto").strip().lower()
+JIRA_SESSION_COOKIE = os.getenv("JIRA_SESSION_COOKIE", "").strip()
+# Keep browser issue links on JIRA_BASE_URL when scoped tokens use the API gateway.
+JIRA_API_BASE_URL = (os.getenv("JIRA_API_BASE_URL") or JIRA_BASE_URL or "").rstrip("/")
 JIRA_API_VERSION = os.getenv("JIRA_API_VERSION", "2")
 DEFAULT_JIRA_PROJECT = os.getenv("JIRA_PROJECT_KEY", "CCD")
 JIRA_FIX_VERSION = os.getenv("JIRA_FIX_VERSION", "CCD CI/CD Release")
@@ -131,8 +136,24 @@ if not GITHUB_TOKEN:
     sys.exit("GITHUB_TOKEN required")
 if not JIRA_BASE_URL:
     sys.exit("JIRA_BASE_URL required")
-if not (JIRA_PAT or (JIRA_USER_EMAIL and JIRA_API_TOKEN)):
-    sys.exit("Jira configuration missing: set JIRA_PAT or JIRA_USER_EMAIL/JIRA_API_TOKEN")
+if JIRA_AUTH_MODE == "auto":
+    # Preserve existing precedence; browser cookies always require explicit opt-in.
+    JIRA_AUTH_MODE = "pat" if JIRA_PAT else "token"
+if JIRA_AUTH_MODE not in {"token", "pat", "cookie"}:
+    sys.exit("JIRA_AUTH_MODE must be auto, token, pat, or cookie")
+if JIRA_AUTH_MODE == "token" and not (JIRA_USER_EMAIL and JIRA_API_TOKEN):
+    sys.exit("Token authentication requires JIRA_USER_EMAIL and JIRA_API_TOKEN")
+if JIRA_AUTH_MODE == "pat" and not JIRA_PAT:
+    sys.exit("PAT authentication requires JIRA_PAT")
+if JIRA_AUTH_MODE == "cookie":
+    if not JIRA_SESSION_COOKIE or "=" not in JIRA_SESSION_COOKIE or any(c in JIRA_SESSION_COOKIE for c in "\r\n"):
+        sys.exit("Cookie authentication requires JIRA_SESSION_COOKIE as a single-line Cookie header value (name=value; ...)")
+    cookie_url = urlsplit(JIRA_API_BASE_URL)
+    site_url = urlsplit(JIRA_BASE_URL)
+    if (cookie_url.scheme != "https" or not cookie_url.hostname or cookie_url.username
+            or cookie_url.password or cookie_url.netloc != site_url.netloc
+            or cookie_url.path not in {"", "/"} or cookie_url.query or cookie_url.fragment):
+        sys.exit("Cookie authentication requires JIRA_API_BASE_URL to be the HTTPS Jira site origin, not the API gateway")
 
 gh = Github(auth=Auth.Token(GITHUB_TOKEN), per_page=PAGE_SIZE)
 _REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "30"))
@@ -429,16 +450,32 @@ def get_target_repos(gh_client) -> Iterable:
     raise RuntimeError("No target repos specified")
 
 def jira_auth() -> Dict[str, str]:
-    if JIRA_PAT:
+    if JIRA_AUTH_MODE == "cookie":
+        return {"Cookie": JIRA_SESSION_COOKIE}
+    if JIRA_AUTH_MODE == "pat":
         return {"Authorization": f"Bearer {JIRA_PAT}"}
     return {}
 
+class _JiraNoBasicAuth(AuthBase):
+    """Prevent requests from attaching .netrc credentials in cookie/PAT modes."""
+
+    def __call__(self, request):
+        return request
+
+def jira_request_auth():
+    if JIRA_AUTH_MODE == "token":
+        return HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
+    return _JiraNoBasicAuth()
+
 def _jira_request(method: str, path: str, **kwargs):
     headers = kwargs.pop("headers", {})
-    auth = kwargs.pop("auth", None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN))
+    auth = kwargs.pop("auth", None) or jira_request_auth()
     timeout = kwargs.pop("timeout", _REQUEST_TIMEOUT)
-    url = f"{JIRA_BASE_URL.rstrip('/')}{path}"
-    return _jira_session.request(
+    url = f"{JIRA_API_BASE_URL}{path}"
+    if JIRA_AUTH_MODE == "cookie":
+        # Raw Cookie headers must never follow a redirect to another host.
+        kwargs["allow_redirects"] = False
+    response = _jira_session.request(
         method,
         url,
         headers={"Accept": "application/json", **jira_auth(), **headers},
@@ -446,6 +483,27 @@ def _jira_request(method: str, path: str, **kwargs):
         timeout=timeout,
         **kwargs,
     )
+    if JIRA_AUTH_MODE == "cookie" and (
+        response.status_code in {401, 403} or 300 <= response.status_code < 400
+        or (response.status_code not in {204, 205}
+            and "text/html" in response.headers.get("Content-Type", "").lower())
+    ):
+        # Classify the failure without logging cookies, response headers, or login HTML.
+        body = response.text.lower()
+        if "xsrf check failed" in body or "csrf check failed" in body or "xsrf security token" in body:
+            reason = "Jira rejected the request's CSRF/XSRF check"
+        elif response.status_code == 401:
+            reason = "Jira rejected the session cookie (missing, expired, or invalid session)"
+        elif response.status_code == 403:
+            reason = "Jira denied this operation (permissions, workflow restrictions, or session policy)"
+        else:
+            reason = "Jira returned a redirect or HTML page instead of an API response"
+        raise requests.HTTPError(
+            f"Jira cookie request failed: HTTP {response.status_code} {method.upper()} {path}: {reason}. "
+            "Refresh JIRA_SESSION_COOKIE if the session has expired, or switch JIRA_AUTH_MODE=token.",
+            response=response,
+        )
+    return response
 
 def _clear_jira_issue_cache(issue_key: str) -> None:
     jira_get_issue.cache_clear()
@@ -824,7 +882,7 @@ def jira_find_existing_issue(
     if VERBOSE and VERBOSE_JIRA_DEDUPE:
         _log(f"[INFO] Jira search candidates: {jql_candidates}")
     headers = {"Accept": "application/json", **jira_auth()}
-    auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
+    auth = jira_request_auth()
     pr_reference_match = _choose_existing_issue(
         _jira_find_issue_keys_by_pr_reference(project, pr_url, auth, headers, required_issue_labels),
         f"PR reference {pr_url}",
@@ -1069,6 +1127,15 @@ def jira_transition_issue(issue_key: str, status_name: str, allow_in_dry_run: bo
             if (t.get("name") or "").lower() == status_name.lower():
                 transition_id = t.get("id")
                 break
+        if not transition_id:
+            # A workflow action name can differ from its destination status.
+            candidates = [t for t in transitions
+                          if ((t.get("to") or {}).get("name") or "").lower() == status_name.lower()]
+            if len(candidates) == 1:
+                transition_id = candidates[0].get("id")
+            elif len(candidates) > 1:
+                _log(f"[WARN] Jira {issue_key} has multiple transitions to {status_name}; configure an exact transition name")
+                return False
         if not transition_id:
             if VERBOSE:
                 _log(f"[INFO] Jira {issue_key} has no transition to status {status_name}")
@@ -1556,7 +1623,7 @@ def process_pr(repo, pr, cfg) -> bool:
         project = cfg.get("jira", {}).get("project", DEFAULT_JIRA_PROJECT)
         if existing and withdraw_duplicate_tickets:
             headers = {"Accept": "application/json", **jira_auth()}
-            auth = None if JIRA_PAT else HTTPBasicAuth(JIRA_USER_EMAIL, JIRA_API_TOKEN)
+            auth = jira_request_auth()
             pr_reference_keys = _jira_find_issue_keys_by_pr_reference(
                 project,
                 pr.html_url,
