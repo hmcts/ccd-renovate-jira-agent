@@ -14,23 +14,68 @@ python -m pip install -r requirements.txt
 ```bash
 export MODE=dry-run # or run
 export REPO_LIST_FILE=./repo-list.txt
-export TEST_PR_NUMBER=1234 # Optional: process only this PR number
+export TEST_PR_NUMBER=https://github.com/hmcts/your-repo/pull/1234 # Optional: process exactly this PR
 export MAX_NEW_JIRA_TICKETS=1 # Optional: stop after creating this many new Jira tickets
 export PR_PROCESS_DELAY_SECONDS=0 # Optional: delay between PRs; increase only if you hit rate limits
 export GITHUB_TOKEN=<YOUR-GITHUB-FINE-GRAINED-TOKEN>
-export JIRA_BASE_URL=https://tools.hmcts.net/jira
+export JIRA_BASE_URL=https://hmcts.atlassian.net
 
-#export JIRA_USER_EMAIL=<YOUR_JIRA_LOGIN_EMAIL_ADDRESS>
-
-#If using PAT authentication, use JIRA_PAT instead of the above two variables
-export JIRA_PAT=<YOUR_JIRA_PAT>
+export JIRA_USER_EMAIL=<YOUR_JIRA_LOGIN_EMAIL_ADDRESS>
+export JIRA_API_TOKEN=<YOUR_JIRA_CLOUD_API_TOKEN>
 
 export JIRA_API_VERSION=2
+export JIRA_EPIC_KEY=CCD-7071 # Optional: parent epic for created/maintained tickets
 export VERBOSE_JIRA_DEDUPE=false # Optional: extra diagnostics for Jira dedupe
 export LOG_TIMINGS=true # Optional: log per-PR, per-repo, and total runtime timings
 export JIRA_RELEASE_APPROACH_FIELD=customfield_12345 # Optional: Jira custom field id for "Release approach"
 export JIRA_RELEASE_APPROACH_VALUE="Tier 1: CI/CD" # Optional: select value for Release approach
 ```
+
+For Jira Cloud, use `JIRA_USER_EMAIL` plus `JIRA_API_TOKEN`. Bearer-token auth via `JIRA_PAT` remains supported for older Jira/Data Center-style deployments.
+
+### Temporary browser session cookie
+
+Set `JIRA_AUTH_MODE=cookie` explicitly to use your own signed-in Jira browser session:
+
+```bash
+export JIRA_AUTH_MODE=cookie
+export JIRA_BASE_URL=https://hmcts.atlassian.net
+unset JIRA_API_BASE_URL
+read -r -s -p 'Jira Cookie header value: ' JIRA_SESSION_COOKIE
+echo
+export JIRA_SESSION_COOKIE
+```
+
+In browser developer tools, open Network, load Jira, and select a successful request to your Jira site's `/rest/api/...` endpoint. Copy the **Cookie request header value** (for example `cloud.session.token=...; other_cookie=...`), without the `Cookie:` prefix. Paste it into the hidden prompt above. Treat it as a password: keep it out of chat, source files, and logs.
+
+[Atlassian documents browser cookie reuse](https://support.atlassian.com/atlassian-cloud/kb/how-to-make-use-of-a-cookie-to-get-logged-through-the-browser/), but [cookie authentication is deprecated](https://developer.atlassian.com/cloud/jira/platform/deprecation-notice-basic-auth-and-cookie-based-auth/). This temporary option may be rejected by your site's policies and needs a fresh cookie when the browser session expires. The agent does not log in or refresh sessions. Cookie mode uses the HTTPS Jira site directly, sends no Basic/Bearer credentials, and rejects redirects, login HTML, and authentication/permission failures with a refresh-or-switch message.
+
+Read-only authentication check (uses the same configuration as the agent; also requires `GITHUB_TOKEN`):
+
+```bash
+python - <<'PY'
+import main
+response = main._jira_request("GET", f"/rest/api/{main.JIRA_API_VERSION}/myself")
+response.raise_for_status()
+print("Jira authentication succeeded")
+PY
+```
+
+Once your scoped API token is ready, switch configuration without changing code:
+
+```bash
+export JIRA_AUTH_MODE=token
+export JIRA_USER_EMAIL=your-email@example.com
+read -r -s -p 'Jira API token: ' JIRA_API_TOKEN
+echo
+export JIRA_API_TOKEN
+export JIRA_API_BASE_URL=https://api.atlassian.com/ex/jira/YOUR_CLOUD_ID
+unset JIRA_SESSION_COOKIE
+```
+
+[Scoped tokens use the Atlassian API gateway](https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/). Keep `JIRA_BASE_URL` as the browser site URL so issue links remain correct. For existing unscoped tokens or Data Center PATs, leave `JIRA_API_BASE_URL` unset. `JIRA_AUTH_MODE=auto` (the default) preserves the previous behavior: PAT if configured, otherwise email/API token; it never selects cookies automatically. Explicit `token`, `pat`, or `cookie` mode uses only the selected credentials, even if other secrets remain set.
+
+For GitHub Actions, set repository variable `JIRA_AUTH_MODE` to `cookie` and repository secret `JIRA_SESSION_COOKIE` to the header value. Leave repository variable `JIRA_API_BASE_URL` unset while using cookies. To switch, set `JIRA_AUTH_MODE=token`, configure secrets `JIRA_USER_EMAIL` and `JIRA_API_TOKEN`, set variable `JIRA_API_BASE_URL` to the scoped-token gateway URL above, and remove the cookie secret. Run the read-only check locally first; a workflow dry run can still make updates enabled by `*_even_in_dry_mode` flags.
 
 When `MODE=dry-run`, no new Jira tickets are created unless a specific `*_even_in_dry_mode` behavior is enabled. Most behavior flags now live in repo config, for example `jira.fix_ticket_labels`, `jira.fix_components_even_in_dry_mode`, `jira.sync_mend_confidence`, `jira.sync_mend_confidence_even_in_dry_mode`, `jira.mend_confidence_label_prefix`, `jira.withdraw_duplicate_tickets`, `jira.target_status_path`, and `github.update_pr_title_with_new_jira`.
 Set `github.mark_jira_live_when_linked_pr_merged: true` to let Jira maintenance transition linked tickets when the linked PR is merged.
@@ -38,12 +83,12 @@ Set `github.mark_jira_withdrawn_when_linked_pr_closed_unmerged: true` to let Jir
 Set `github.list_prs_where_author: true` to prefilter the initial PR list by author before the normal per-PR label checks run. Configure the author with `github.pr_author`.
 Set top-level `pr_process_delay_seconds` in `.github/renovate-jira.yml` to override the global `PR_PROCESS_DELAY_SECONDS` env var for a specific repo.
 
-## Quick validation of JIRA PAT
+## Quick validation of Jira Cloud API token
 
 ```bash
-curl -H "Authorization: Bearer $JIRA_PAT" \
+curl -u "$JIRA_USER_EMAIL:$JIRA_API_TOKEN" \
   -H "Accept: application/json" \
-  https://tools.hmcts.net/jira/rest/api/2/myself
+  "$JIRA_BASE_URL/rest/api/2/myself"
 ```
 
 ## run locally
@@ -53,13 +98,41 @@ LOCAL_CONFIG_PATH=.github/renovate-jira.yml VERBOSE=1 python main.py
 
 Single-ticket test run example:
 ```bash
-MODE=run GITHUB_REPO=hmcts/your-repo TEST_PR_NUMBER=1234 MAX_NEW_JIRA_TICKETS=1 VERBOSE=1 python main.py
+MODE=run TEST_PR_NUMBER=https://github.com/hmcts/your-repo/pull/1234 MAX_NEW_JIRA_TICKETS=1 VERBOSE=1 python main.py
 ```
 
 Existing-ticket component-only test example:
 ```bash
 MODE=run GITHUB_REPO=hmcts/ccd-case-document-am-api TEST_PR_NUMBER=1234 MAX_NEW_JIRA_TICKETS=0 VERBOSE=1 python main.py
 ```
+
+## Jira Cloud smoke test
+
+For a full live run using the repository config and all repositories in `repo-list.txt`, run from the project directory with your GitHub token and Jira cookie already exported:
+
+```bash
+env -u GITHUB_REPO -u TEST_PR_NUMBER -u REPO_LIST \
+  MODE=run \
+  JIRA_AUTH_MODE=cookie \
+  JIRA_BASE_URL=https://hmcts.atlassian.net \
+  JIRA_API_BASE_URL=https://hmcts.atlassian.net \
+  REPO_LIST_FILE=./repo-list.txt \
+  MAX_NEW_JIRA_TICKETS=0 \
+  LOCAL_CONFIG_PATH=.github/renovate-jira.yml \
+  VERBOSE=1 \
+  .venv/bin/python main.py
+```
+
+`MAX_NEW_JIRA_TICKETS=0` means no creation limit. This run also maintains existing linked tickets: merged PRs follow `Blocked -> Releasable -> Released to production`, and closed unmerged PRs target `Withdrawn`. The merged path's final transition still needs live verification. The repository config omits the rejected Release approach field and disables mutation overrides during dry runs.
+
+Use one PR that is safe to merge and has a required Renovate label. Its title or body must also match an enabled rule, such as containing `migration` for the major-update rule.
+
+1. Dispatch `Renovate -> Jira automation` with the full PR URL and `mode=dry-run`. Confirm the log names only that repository and PR and shows the expected transition path.
+2. Dispatch the same PR with `mode=run`. Confirm exactly one Jira ticket is created under the configured parent, has a GitHub remote link, and follows `Blocked -> To Do` using the `Resume Development` action (with no transition needed if it starts in `To Do`).
+3. Dispatch it again while open. Confirm the existing ticket is found and no second ticket is created.
+4. Merge the PR, then dispatch the same URL with `mode=run`. Confirm the same ticket follows `Blocked -> Releasable -> Released to production` and finishes in `Released to production`. The `Resume Release` action leads to `Releasable`.
+
+A targeted dispatch processes the selected PR even after it closes and skips repository-wide Jira maintenance. Any required transition failure fails the workflow.
 
 ## Per-Repo Configuration
 
@@ -108,10 +181,10 @@ jira:
   withdraw_duplicate_tickets: true
   withdraw_duplicate_tickets_even_in_dry_mode: true
   transition_merged_existing_via: "Released to production"
-  transition_merged_existing_path: ["Blocked", "Resume Release", "Released to production"]
+  transition_merged_existing_path: ["Blocked", "Releasable", "Released to production"]
   transition_closed_unmerged_existing_via: "Withdrawn"
-  target_status: "Resume Development"
-  target_status_path: ["Blocked", "Resume Development"]
+  target_status: "To Do"
+  target_status_path: ["Blocked", "To Do"]
   skip_statuses: ["Resume Development", "Resume QA", "Resume Release"]
   release_approach_field: "customfield_12345"
   release_approach: "Tier 1: CI/CD"

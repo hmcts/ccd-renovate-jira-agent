@@ -54,12 +54,12 @@ When an eligible Renovate PR is open, the system should automatically ensure the
 
 5. Jira creation behavior:
 - Issue type `Task`.
-- Set summary, description, labels, priority, fixVersion, epic link.
+- Set summary, description, labels, priority, fixVersion, and parent epic.
 - Optional release approach custom field.
 
 6. Existing Jira ticket behavior:
 - Skip if ticket status in configured skip statuses.
-- Optionally repair labels/fixVersion/epic/release approach.
+- Optionally repair labels/fixVersion/parent epic/release approach.
 - Optionally add PR remotelink.
 
 7. GitHub feedback behavior:
@@ -95,7 +95,7 @@ Common optional:
 - `JIRA_TARGET_STATUS`
 - `JIRA_TARGET_STATUS_PATH`
 - `JIRA_SKIP_STATUSES`
-- `JIRA_PROJECT_KEY`, `JIRA_FIX_VERSION`, `JIRA_EPIC_LINK_FIELD`, `JIRA_EPIC_KEY`
+- `JIRA_PROJECT_KEY`, `JIRA_FIX_VERSION`, `JIRA_EPIC_KEY`
 - `JIRA_RELEASE_APPROACH_FIELD`, `JIRA_RELEASE_APPROACH_VALUE`
 
 ### Per-repo file: `.github/renovate-jira.yml`
