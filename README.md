@@ -27,7 +27,7 @@ export JIRA_API_VERSION=2
 export JIRA_EPIC_KEY=CCD-7071 # Optional: parent epic for created/maintained tickets
 export VERBOSE_JIRA_DEDUPE=false # Optional: extra diagnostics for Jira dedupe
 export LOG_TIMINGS=true # Optional: log per-PR, per-repo, and total runtime timings
-export JIRA_RELEASE_APPROACH_FIELD=customfield_12345 # Optional: Jira custom field id for "Release approach"
+export JIRA_RELEASE_APPROACH_FIELD=auto # Optional: discover "Release approach", or use a customfield ID
 export JIRA_RELEASE_APPROACH_VALUE="Tier 1: CI/CD" # Optional: select value for Release approach
 ```
 
@@ -123,7 +123,9 @@ env -u GITHUB_REPO -u TEST_PR_NUMBER -u REPO_LIST \
   .venv/bin/python main.py
 ```
 
-`MAX_NEW_JIRA_TICKETS=0` means no creation limit. This run also maintains existing linked tickets: merged PRs follow `Blocked -> Releasable -> Released to production`, and closed unmerged PRs target `Withdrawn`. The merged path's final transition still needs live verification. The repository config omits the rejected Release approach field and disables mutation overrides during dry runs.
+`MAX_NEW_JIRA_TICKETS=0` means no creation limit. This run also maintains existing linked tickets: merged PRs follow `Blocked -> Releasable -> Released to production`, and closed unmerged PRs target `Withdrawn`. The merged path's final transition still needs live verification. The repository config discovers the Cloud Release approach field by name and sets it to `Tier 1: CI/CD` on new tickets and when `fix_ticket_labels` syncs existing tickets. Mutation overrides are disabled during dry runs.
+
+Set `jira.release_approach_field` to `auto` to discover the custom field using Jira's [Get fields API](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-fields/#api-rest-api-2-field-get). An empty string disables this field; an explicit `customfield_...` ID skips discovery. Discovery fails if the name is missing or ambiguous, so configure an explicit Cloud field ID in that case. The field must be available on the project's Task create/edit screens, and `Tier 1: CI/CD` must be an allowed option. Dry runs may read field metadata but do not write tickets.
 
 Use one PR that is safe to merge and has a required Renovate label. Its title or body must also match an enabled rule, such as containing `migration` for the major-update rule.
 
@@ -186,7 +188,7 @@ jira:
   target_status: "To Do"
   target_status_path: ["Blocked", "To Do"]
   skip_statuses: ["Resume Development", "Resume QA", "Resume Release"]
-  release_approach_field: "customfield_12345"
+  release_approach_field: "auto"
   release_approach: "Tier 1: CI/CD"
   priority:
     security: "2-High"

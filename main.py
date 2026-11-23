@@ -529,6 +529,27 @@ def _jira_single_select_matches(current_value: Any, desired_value: Dict[str, Any
             return False
     return True
 
+@lru_cache(maxsize=32)
+def jira_resolve_release_approach_field(configured_field: str) -> str:
+    """Resolve the migrated Cloud field once, preserving explicit IDs and opt-out."""
+    configured_field = (configured_field or "").strip()
+    if configured_field.lower() != "auto":
+        return configured_field
+    resp = _jira_request("GET", f"/rest/api/{JIRA_API_VERSION}/field")
+    resp.raise_for_status()
+    matches = [
+        field["id"] for field in resp.json()
+        if (field.get("name") or "").strip().casefold() == "release approach"
+        and (field.get("id") or "").startswith("customfield_")
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"Expected one Jira custom field named 'Release approach', found {len(matches)}. "
+            "Set jira.release_approach_field to the correct customfield ID for this Jira site."
+        )
+    _vlog(f"[INFO] Resolved Jira Release approach field: {matches[0]}")
+    return matches[0]
+
 def _jira_parent_value(issue_key: str) -> Optional[Dict[str, str]]:
     issue_key = (issue_key or "").strip()
     if not issue_key:
@@ -569,6 +590,7 @@ def jira_create_issue(
         payload["fields"]["components"] = [{"name": component}]
     release_approach = _jira_single_select_value(release_approach_value)
     if release_approach_field and release_approach:
+        release_approach_field = jira_resolve_release_approach_field(release_approach_field)
         payload["fields"][release_approach_field] = release_approach
     if MODE == "dry-run":
         _log("[DRY-RUN] Would create Jira issue in project {}: {}".format(project, summary))
@@ -1044,7 +1066,7 @@ def jira_get_issue(issue_key: str, extra_fields_key: str = "") -> Optional[Dict[
     if issue_key.startswith("DRY-RUN") and not can_mutate_jira():
         return None
     fields_to_read = ["labels", "fixVersions", "status", "components", "description", "parent", "issuelinks"]
-    if JIRA_RELEASE_APPROACH_FIELD:
+    if JIRA_RELEASE_APPROACH_FIELD and JIRA_RELEASE_APPROACH_FIELD.lower() != "auto":
         fields_to_read.append(JIRA_RELEASE_APPROACH_FIELD)
     extra_fields = [field_name for field_name in extra_fields_key.split(",") if field_name]
     for field_name in extra_fields:
@@ -1220,6 +1242,10 @@ def jira_ensure_ticket_fields(
     sync_confidence_label: bool = False,
     allow_in_dry_run: bool = False,
 ) -> None:
+    if sync_labels_bundle and _jira_single_select_value(release_approach_value):
+        release_approach_field = jira_resolve_release_approach_field(release_approach_field)
+    else:
+        release_approach_field = ""
     issue = jira_get_issue(issue_key, release_approach_field if release_approach_field else "")
     if not issue:
         return

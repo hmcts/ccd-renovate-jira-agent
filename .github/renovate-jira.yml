@@ -45,8 +45,8 @@ jira:
   target_status: "To Do"
   target_status_path: ["Blocked", "To Do"]
   skip_statuses: ["Done", "Live"]
-  # Disabled: Jira Cloud rejects the previous field id on the Task create screen.
-  release_approach_field: ""
+  # Resolve the Cloud field by name; the pre-migration customfield ID is invalid.
+  release_approach_field: "auto"
   release_approach: "Tier 1: CI/CD"
   priority:
     security: "2-High"
